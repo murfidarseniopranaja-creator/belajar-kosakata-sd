@@ -1,43 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import {
-  BookOpen,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  CircleHelp,
-  Crown,
-  GraduationCap,
-  Home,
-  Medal,
-  RefreshCw,
-  RotateCcw,
-  Sparkles,
-  Trophy,
-  Volume2,
-} from 'lucide-react'
-import {
-  SAMPLE_CATEGORIES,
-  SAMPLE_VOCABULARY,
-  supabase,
-  type Category,
-  type QuizScore,
-  type Vocabulary,
-} from './lib/supabase'
+import { BookOpen, Check, ChevronLeft, ChevronRight, CircleHelp, Crown, GraduationCap, Home, Medal, RefreshCw, Trophy, Volume2 } from 'lucide-react'
+import { SAMPLE_CATEGORIES, SAMPLE_VOCABULARY, supabase, type Category, type QuizScore, type Vocabulary } from './lib/supabase'
 
 type Page = 'home' | 'learn' | 'quiz' | 'leaderboard'
-
 const GRADES = [1, 2, 3, 4, 5, 6]
-const CATEGORY_COLORS: Record<string, string> = {
-  mint: 'bg-[#DDF5E9]',
-  sunshine: 'bg-[#FFE7A3]',
-  lavender: 'bg-[#E9E2FF]',
-  coral: 'bg-[#FFE0D9]',
-}
+const COLORS: Record<string, string> = { mint: 'bg-[#DDF5E9]', sunshine: 'bg-[#FFE7A3]', lavender: 'bg-[#E9E2FF]', coral: 'bg-[#FFE0D9]' }
 
 function App() {
   const [page, setPage] = useState<Page>('home')
   const [categories, setCategories] = useState<Category[]>(SAMPLE_CATEGORIES)
-  const [vocabulary, setVocabulary] = useState<Vocabulary[]>(SAMPLE_VOCABULARY)
+  const [words, setWords] = useState<Vocabulary[]>(SAMPLE_VOCABULARY)
   const [categoryId, setCategoryId] = useState('')
   const [grade, setGrade] = useState(1)
   const [studentName, setStudentName] = useState('')
@@ -46,122 +18,93 @@ function App() {
   const [savedWords, setSavedWords] = useState<string[]>([])
   const [quizWords, setQuizWords] = useState<Vocabulary[]>([])
   const [quizIndex, setQuizIndex] = useState(0)
-  const [quizScore, setQuizScore] = useState(0)
-  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null)
-  const [quizFinished, setQuizFinished] = useState(false)
+  const [score, setScore] = useState(0)
+  const [answer, setAnswer] = useState<string | null>(null)
+  const [finished, setFinished] = useState(false)
   const [scoreSaved, setScoreSaved] = useState(false)
-  const [leaderboard, setLeaderboard] = useState<QuizScore[]>([])
-  const [dataMessage, setDataMessage] = useState('')
-  const [leaderboardMessage, setLeaderboardMessage] = useState('')
+  const [scores, setScores] = useState<QuizScore[]>([])
+  const [dataError, setDataError] = useState('')
+  const [scoreError, setScoreError] = useState('')
   const [loading, setLoading] = useState(true)
-  const [activeSpeech, setActiveSpeech] = useState<string | null>(null)
+  const [speaking, setSpeaking] = useState<string | null>(null)
 
   useEffect(() => {
-    let mounted = true
-
-    async function loadLearningData() {
+    let active = true
+    async function loadData() {
       if (!supabase) {
-        setDataMessage('Mode contoh: konfigurasi Supabase belum tersedia.')
+        setDataError('Supabase belum dikonfigurasi; kosakata contoh ditampilkan.')
         setLoading(false)
         return
       }
-
       try {
+        // sort_order is defined by the schema but may not yet exist in an already-created project DB.
+        // Do not select or order by it; category.name is present in the schema and is stable.
         const [categoryResult, vocabularyResult] = await Promise.all([
-          supabase.from('categories').select('*').order('sort_order', { ascending: true }),
-          supabase.from('vocabulary').select('*').order('english', { ascending: true }),
+          supabase.from('categories').select('id, name, emoji, color, created_at').order('name', { ascending: true }),
+          supabase.from('vocabulary').select('id, category_id, english, indonesian, pronunciation, example, emoji, created_at').order('english', { ascending: true }),
         ])
-        if (!mounted) return
-
-        const categoryError = categoryResult.error
-        const vocabularyError = vocabularyResult.error
-        if (categoryError || vocabularyError) {
-          const detail = categoryError
-            ? `categories: ${categoryError.message}`
-            : `vocabulary: ${vocabularyError?.message ?? 'Permintaan gagal.'}`
+        if (!active) return
+        if (categoryResult.error || vocabularyResult.error) {
+          const detail = categoryResult.error
+            ? `categories: ${categoryResult.error.message}`
+            : `vocabulary: ${vocabularyResult.error?.message ?? 'Permintaan gagal.'}`
+          setDataError(`Koneksi Supabase gagal: ${detail}. Kosakata contoh ditampilkan sementara.`)
           setCategories(SAMPLE_CATEGORIES)
-          setVocabulary(SAMPLE_VOCABULARY)
-          setDataMessage(`Koneksi Supabase gagal: ${detail}. Kosakata contoh ditampilkan sementara.`)
+          setWords(SAMPLE_VOCABULARY)
         } else {
           setCategories((categoryResult.data ?? []) as Category[])
-          setVocabulary((vocabularyResult.data ?? []) as Vocabulary[])
-          setDataMessage('')
+          setWords((vocabularyResult.data ?? []) as Vocabulary[])
+          setDataError('')
         }
       } catch (error) {
-        if (!mounted) return
+        if (!active) return
         const detail = error instanceof Error ? error.message : String(error)
+        setDataError(`Koneksi Supabase gagal: ${detail}. Kosakata contoh ditampilkan sementara.`)
         setCategories(SAMPLE_CATEGORIES)
-        setVocabulary(SAMPLE_VOCABULARY)
-        setDataMessage(`Koneksi Supabase gagal: ${detail}. Kosakata contoh ditampilkan sementara.`)
+        setWords(SAMPLE_VOCABULARY)
       } finally {
-        if (mounted) setLoading(false)
+        if (active) setLoading(false)
       }
     }
-
-    void loadLearningData()
-    return () => {
-      mounted = false
-    }
+    void loadData()
+    return () => { active = false }
   }, [])
 
-  const loadLeaderboard = async () => {
+  const loadScores = async () => {
     if (!supabase) {
-      setLeaderboard([])
-      setLeaderboardMessage('Papan skor online tidak tersedia karena konfigurasi Supabase belum lengkap.')
+      setScores([])
+      setScoreError('Papan skor online tidak tersedia karena Supabase belum dikonfigurasi.')
       return
     }
-
-    try {
-      const { data, error } = await supabase
-        .from('quiz_scores')
-        .select('id, player_name, score, total_questions, category_id, created_at')
-        .order('score', { ascending: false })
-        .order('created_at', { ascending: true })
-        .limit(10)
-      if (error) {
-        setLeaderboardMessage(`Supabase quiz_scores: ${error.message}`)
-        return
-      }
-      setLeaderboard((data ?? []) as QuizScore[])
-      setLeaderboardMessage('')
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-      setLeaderboardMessage(`Supabase quiz_scores: ${detail}`)
+    const { data, error } = await supabase.from('quiz_scores')
+      .select('id, player_name, score, total_questions, category_id, created_at')
+      .order('score', { ascending: false }).order('created_at', { ascending: true }).limit(10)
+    if (error) {
+      setScoreError(`quiz_scores: ${error.message}`)
+      return
     }
+    setScores((data ?? []) as QuizScore[])
+    setScoreError('')
   }
 
   useEffect(() => {
-    void loadLeaderboard()
+    void loadScores()
     if (!supabase) return
-
-    const channel = supabase
-      .channel('quiz-scores-leaderboard')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'quiz_scores' }, () => {
-        void loadLeaderboard()
-      })
+    const channel = supabase.channel('quiz-scores-board')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'quiz_scores' }, () => { void loadScores() })
       .subscribe()
-
-    return () => {
-      void supabase.removeChannel(channel)
-    }
+    return () => { void supabase.removeChannel(channel) }
   }, [])
 
-  const filteredVocabulary = useMemo(
-    () => vocabulary.filter((item) => !categoryId || item.category_id === categoryId),
-    [vocabulary, categoryId],
-  )
-  const word = filteredVocabulary.length > 0
-    ? filteredVocabulary[currentWord % filteredVocabulary.length]
-    : undefined
+  const visibleWords = useMemo(() => words.filter((item) => !categoryId || item.category_id === categoryId), [words, categoryId])
+  const word = visibleWords.length ? visibleWords[currentWord % visibleWords.length] : undefined
   const quizWord = quizWords[quizIndex]
-  const options = useMemo(() => {
+  const choices = useMemo(() => {
     if (!quizWord) return []
-    const distractors = vocabulary
-      .filter((item) => item.id !== quizWord.id && item.indonesian !== quizWord.indonesian)
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 3)
-    return [...distractors, quizWord].sort((a, b) => a.indonesian.localeCompare(b.indonesian))
-  }, [quizWord, vocabulary])
+    const otherChoices = words.filter((item) => item.id !== quizWord.id && item.indonesian !== quizWord.indonesian)
+      .sort(() => Math.random() - 0.5).slice(0, 3)
+    return [...otherChoices, quizWord].sort((a, b) => a.indonesian.localeCompare(b.indonesian))
+  }, [quizWord, words])
   const selectedCategory = categories.find((item) => item.id === categoryId) ?? null
 
   const speak = (text: string, id: string) => {
@@ -170,488 +113,145 @@ function App() {
     const utterance = new SpeechSynthesisUtterance(text)
     utterance.lang = 'en-US'
     utterance.rate = 0.85
-    utterance.onstart = () => setActiveSpeech(id)
-    utterance.onend = () => setActiveSpeech(null)
-    utterance.onerror = () => setActiveSpeech(null)
-    setActiveSpeech(id)
+    utterance.onstart = () => setSpeaking(id)
+    utterance.onend = () => setSpeaking(null)
+    utterance.onerror = () => setSpeaking(null)
+    setSpeaking(id)
     window.speechSynthesis.speak(utterance)
   }
 
-  const selectCategory = (id: string) => {
+  const chooseCategory = (id: string) => {
     setCategoryId(id)
     setCurrentWord(0)
     setShowMeaning(false)
   }
-
   const startQuiz = () => {
     if (!studentName.trim()) {
       document.getElementById('student-name')?.focus()
       return
     }
-    const pool = filteredVocabulary.length > 0 ? filteredVocabulary : vocabulary
-    const shuffledWords = [...pool].sort(() => Math.random() - 0.5)
-    const count = Math.min(grade <= 3 ? 5 : 10, shuffledWords.length)
-    setQuizWords(shuffledWords.slice(0, count))
+    const pool = visibleWords.length ? visibleWords : words
+    const shuffled = [...pool].sort(() => Math.random() - 0.5)
+    const count = Math.min(grade <= 3 ? 5 : 10, shuffled.length)
+    setQuizWords(shuffled.slice(0, count))
     setQuizIndex(0)
-    setQuizScore(0)
-    setSelectedAnswer(null)
-    setQuizFinished(false)
+    setScore(0)
+    setAnswer(null)
+    setFinished(false)
     setScoreSaved(false)
     setPage('quiz')
   }
-
-  const answerQuiz = (answer: string) => {
-    if (selectedAnswer || !quizWord) return
-    setSelectedAnswer(answer)
-    if (answer === quizWord.indonesian) {
-      setQuizScore((score) => score + 1)
-    }
+  const chooseAnswer = (value: string) => {
+    if (answer || !quizWord) return
+    setAnswer(value)
+    if (value === quizWord.indonesian) setScore((previous) => previous + 1)
   }
-
   const nextQuestion = () => {
     if (quizIndex + 1 < quizWords.length) {
       setQuizIndex((index) => index + 1)
-      setSelectedAnswer(null)
+      setAnswer(null)
       return
     }
-
-    const finalScore = quizScore + (selectedAnswer === quizWord?.indonesian ? 1 : 0)
-    setQuizScore(finalScore)
-    setQuizFinished(true)
+    const finalScore = score + (answer === quizWord?.indonesian ? 1 : 0)
+    setScore(finalScore)
+    setFinished(true)
     if (!supabase) return
-
-    void supabase
-      .from('quiz_scores')
-      .insert({
-        player_name: studentName.trim(),
-        score: finalScore,
-        total_questions: quizWords.length,
-        category_id: categoryId || null,
-      })
-      .then(({ error }) => {
-        if (error) {
-          setLeaderboardMessage(`Skor gagal disimpan ke quiz_scores: ${error.message}`)
-          return
-        }
-        setScoreSaved(true)
-        void loadLeaderboard()
-      })
-      .catch((error: unknown) => {
-        const detail = error instanceof Error ? error.message : String(error)
-        setLeaderboardMessage(`Skor gagal disimpan: ${detail}`)
-      })
+    void supabase.from('quiz_scores').insert({
+      player_name: studentName.trim(),
+      score: finalScore,
+      total_questions: quizWords.length,
+      category_id: categoryId || null,
+    }).then(({ error }) => {
+      if (error) {
+        setScoreError(`quiz_scores insert: ${error.message}`)
+        return
+      }
+      setScoreSaved(true)
+      void loadScores()
+    })
   }
+  const navigate = (next: Page) => setPage(next)
 
-  const goTo = (nextPage: Page) => setPage(nextPage)
-
-  return (
-    <div className="min-h-screen bg-[#F6FBF8] pb-24 text-[#25334A] lg:pb-0">
-      <div className="mx-auto flex min-h-screen max-w-7xl">
-        <aside className="hidden w-64 shrink-0 flex-col border-r border-[#E8EFEA] bg-white px-6 py-7 lg:flex">
-          <button onClick={() => goTo('home')} className="mb-10 flex items-center gap-3 text-left">
-            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[#DDF5E9] text-2xl">🌱</span>
-            <span>
-              <b className="block text-xl font-black">KosaKata</b>
-              <small className="font-extrabold text-slate-400">BELAJAR JADI SERU!</small>
-            </span>
-          </button>
-          <p className="mb-3 px-3 text-xs font-black uppercase tracking-widest text-slate-400">Menu belajar</p>
-          <div className="space-y-2">
-            <NavButton active={page === 'home'} icon={<Home size={19} />} label="Beranda" onClick={() => goTo('home')} />
-            <NavButton active={page === 'learn'} icon={<BookOpen size={19} />} label="Kartu kata" onClick={() => goTo('learn')} />
-            <NavButton active={page === 'quiz'} icon={<CircleHelp size={19} />} label="Kuis seru" onClick={startQuiz} />
-            <NavButton active={page === 'leaderboard'} icon={<Trophy size={19} />} label="Papan skor" onClick={() => goTo('leaderboard')} />
-          </div>
-          <div className="mt-auto rounded-3xl bg-[#F0F8F3] p-5">
-            <div className="mb-3 text-3xl">🚀</div>
-            <b>Terus semangat!</b>
-            <p className="mt-1 text-sm leading-6 text-slate-500">Sedikit belajar setiap hari bikin kamu makin hebat.</p>
-          </div>
-        </aside>
-
-        <main className="min-w-0 flex-1 px-4 pb-8 pt-5 sm:px-7 lg:px-10 lg:pt-8">
-          <header className="mb-7 flex items-center justify-between">
-            <button onClick={() => goTo('home')} className="flex items-center gap-2 font-black lg:hidden">
-              <span className="text-2xl">🌱</span>KosaKata
-            </button>
-            <div className="hidden sm:block">
-              <p className="text-sm font-bold text-slate-400">Belajar bahasa Inggris</p>
-              <p className="mt-1 text-xl font-black">Hai, Sahabat Pintar! 👋</p>
-            </div>
-            <div className="ml-auto flex items-center gap-2 rounded-full bg-white px-4 py-2 shadow-sm">
-              <GraduationCap size={18} className="text-[#32875D]" />
-              <span className="text-sm font-extrabold">Kelas {grade} SD</span>
-            </div>
-          </header>
-
-          {dataMessage && <p role="status" className="mb-5 rounded-2xl bg-amber-100 px-4 py-3 text-sm font-bold text-amber-900">{dataMessage}</p>}
-          {loading && <p className="mb-4 text-sm font-bold text-slate-500">Memuat kosakata…</p>}
-
-          {page === 'home' && (
-            <HomePage
-              categories={categories}
-              categoryId={categoryId}
-              grade={grade}
-              name={studentName}
-              onName={setStudentName}
-              onGrade={setGrade}
-              onCategory={selectCategory}
-              onLearn={() => goTo('learn')}
-              onQuiz={startQuiz}
-              onLeaderboard={() => goTo('leaderboard')}
-            />
-          )}
-          {page === 'learn' && (
-            <LearnPage
-              categories={categories}
-              categoryId={categoryId}
-              words={filteredVocabulary}
-              word={word}
-              currentWord={currentWord}
-              showMeaning={showMeaning}
-              saved={word ? savedWords.includes(word.id) : false}
-              onCategory={selectCategory}
-              onFlip={() => setShowMeaning((value) => !value)}
-              onNext={() => { setCurrentWord((value) => value + 1); setShowMeaning(false) }}
-              onSave={() => {
-                if (!word) return
-                setSavedWords((saved) => saved.includes(word.id)
-                  ? saved.filter((id) => id !== word.id)
-                  : [...saved, word.id])
-              }}
-              speak={speak}
-              activeSpeech={activeSpeech}
-            />
-          )}
-          {page === 'quiz' && (
-            <QuizPage
-              word={quizWord}
-              options={options}
-              selected={selectedAnswer}
-              score={quizScore}
-              index={quizIndex}
-              total={quizWords.length}
-              finished={quizFinished}
-              name={studentName}
-              scoreSaved={scoreSaved}
-              category={selectedCategory}
-              onAnswer={answerQuiz}
-              onNext={nextQuestion}
-              onBack={() => goTo('home')}
-              onLeaderboard={() => goTo('leaderboard')}
-              speak={speak}
-              activeSpeech={activeSpeech}
-            />
-          )}
-          {page === 'leaderboard' && (
-            <LeaderboardPage
-              scores={leaderboard}
-              categories={categories}
-              message={leaderboardMessage}
-              onRefresh={() => { void loadLeaderboard() }}
-            />
-          )}
-
-          <footer className="mt-12 flex items-center justify-center gap-2 text-xs font-bold text-slate-400">
-            <span>Belajar dengan gembira</span>
-            <Sparkles size={14} className="text-amber-400" />
-          </footer>
-        </main>
-      </div>
-
-      <nav className="fixed inset-x-0 bottom-0 z-10 flex justify-around border-t border-slate-100 bg-white/95 px-2 py-2 backdrop-blur lg:hidden">
-        <MobileNav icon={<Home size={19} />} label="Beranda" active={page === 'home'} onClick={() => goTo('home')} />
-        <MobileNav icon={<BookOpen size={19} />} label="Kartu kata" active={page === 'learn'} onClick={() => goTo('learn')} />
-        <MobileNav icon={<CircleHelp size={19} />} label="Kuis" active={page === 'quiz'} onClick={startQuiz} />
-        <MobileNav icon={<Trophy size={19} />} label="Papan skor" active={page === 'leaderboard'} onClick={() => goTo('leaderboard')} />
-      </nav>
-    </div>
-  )
-}
-
-function NavButton({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) {
-  const className = active
-    ? 'bg-[#E7F6ED] text-[#318A60]'
-    : 'text-slate-500 hover:bg-slate-50'
-  return (
-    <button onClick={onClick} className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3.5 text-sm font-extrabold transition ${className}`}>
-      {icon}{label}
-    </button>
-  )
-}
-
-function MobileNav({ icon, label, active, onClick }: { icon: ReactNode; label: string; active: boolean; onClick: () => void }) {
-  const className = active ? 'text-[#318A60]' : 'text-slate-400'
-  return (
-    <button onClick={onClick} className={`flex min-w-[68px] flex-col items-center gap-1 rounded-xl px-1 py-1 text-[10px] font-extrabold ${className}`}>
-      {icon}{label}
-    </button>
-  )
-}
-
-function Speaker({ text, id, speak, activeSpeech }: { text: string; id: string; speak: (text: string, id: string) => void; activeSpeech: string | null }) {
-  const active = activeSpeech === id
-  const className = active
-    ? 'scale-110 animate-pulse bg-[#32875D] text-white shadow-lg'
-    : 'bg-[#EAF7EF] text-[#32875D] hover:bg-[#DDF5E9]'
-  return (
-    <button
-      type="button"
-      aria-label={`Dengarkan ${text}`}
-      onClick={(event) => { event.stopPropagation(); speak(text, id) }}
-      className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl transition ${className}`}
-    >
-      <Volume2 size={22} />
-    </button>
-  )
-}
-
-function CategoryPicker({ categories, categoryId, onCategory }: { categories: Category[]; categoryId: string; onCategory: (id: string) => void }) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      <button onClick={() => onCategory('')} className={`min-h-12 rounded-2xl px-4 font-extrabold ${!categoryId ? 'bg-[#32875D] text-white' : 'bg-white text-slate-600 shadow-sm'}`}>
-        Semua
-      </button>
-      {categories.map((category) => {
-        const color = CATEGORY_COLORS[category.color] ?? 'bg-white'
-        const className = categoryId === category.id ? 'bg-[#32875D] text-white' : `${color} text-[#25334A]`
-        return (
-          <button key={category.id} onClick={() => onCategory(category.id)} className={`min-h-12 rounded-2xl px-4 font-extrabold transition ${className}`}>
-            {category.emoji} {category.name}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-function GradePicker({ grade, onGrade }: { grade: number; onGrade: (grade: number) => void }) {
-  return (
-    <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-      {GRADES.map((item) => {
-        const className = grade === item
-          ? 'bg-[#32875D] text-white shadow-md'
-          : 'bg-white text-slate-600 shadow-sm hover:-translate-y-0.5'
-        return (
-          <button key={item} onClick={() => onGrade(item)} className={`min-h-14 rounded-2xl text-lg font-black transition ${className}`}>
-            Kelas {item}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-function HomePage({ categories, categoryId, grade, name, onName, onGrade, onCategory, onLearn, onQuiz, onLeaderboard }: {
-  categories: Category[]
-  categoryId: string
-  grade: number
-  name: string
-  onName: (name: string) => void
-  onGrade: (grade: number) => void
-  onCategory: (id: string) => void
-  onLearn: () => void
-  onQuiz: () => void
-  onLeaderboard: () => void
-}) {
-  return (
-    <>
-      <section className="relative overflow-hidden rounded-[30px] bg-[#DDF5E9] px-6 py-8 sm:px-10 sm:py-10">
-        <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-2 text-xs font-black text-[#438765]"><Sparkles size={14} /> WAKTUNYA BELAJAR!</span>
-        <h1 className="mt-4 text-4xl font-black sm:text-5xl">Yuk, tambah <span className="text-[#33875D]">kosakata</span> hari ini!</h1>
-        <p className="mt-3 max-w-lg font-semibold leading-7 text-[#567665]">Belajar kata-kata bahasa Inggris baru dengan cara seru dan gampang diingat.</p>
-        <div className="mt-6 flex flex-wrap gap-3">
-          <button onClick={onLearn} className="inline-flex min-h-12 items-center gap-2 rounded-2xl bg-[#32875D] px-5 font-extrabold text-white">Mulai belajar <ChevronRight size={18} /></button>
-          <button onClick={onLeaderboard} className="inline-flex min-h-12 items-center gap-2 rounded-2xl bg-white px-5 font-extrabold text-[#32875D]"><Trophy size={18} /> Papan skor</button>
+  return <div className="min-h-screen bg-[#F6FBF8] pb-24 text-[#25334A] lg:pb-0">
+    <div className="mx-auto flex min-h-screen max-w-7xl">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-[#E8EFEA] bg-white px-6 py-7 lg:flex">
+        <button onClick={() => navigate('home')} className="mb-10 flex items-center gap-3 text-left"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-[#DDF5E9] text-2xl">🌱</span><span><b className="block text-xl font-black">KosaKata</b><small className="font-extrabold text-slate-400">BELAJAR JADI SERU!</small></span></button>
+        <p className="mb-3 px-3 text-xs font-black uppercase tracking-widest text-slate-400">Menu belajar</p>
+        <div className="space-y-2">
+          <Nav active={page === 'home'} icon={<Home size={19}/>} label="Beranda" onClick={() => navigate('home')}/>
+          <Nav active={page === 'learn'} icon={<BookOpen size={19}/>} label="Kartu kata" onClick={() => navigate('learn')}/>
+          <Nav active={page === 'quiz'} icon={<CircleHelp size={19}/>} label="Kuis seru" onClick={startQuiz}/>
+          <Nav active={page === 'leaderboard'} icon={<Trophy size={19}/>} label="Papan skor" onClick={() => navigate('leaderboard')}/>
         </div>
-      </section>
-
-      <section className="mt-8 rounded-[28px] bg-white p-5 shadow-soft sm:p-7">
-        <h2 className="mb-4 text-xl font-black">Isi nama dan pilih kelas</h2>
-        <div className="grid gap-5 md:grid-cols-[.8fr_1.2fr]">
-          <label className="text-sm font-extrabold">Nama siswa
-            <input id="student-name" value={name} onChange={(event) => onName(event.target.value)} maxLength={50} placeholder="Contoh: Budi" className="mt-2 min-h-14 w-full rounded-2xl border-2 border-[#E5EEE8] px-4 outline-none focus:border-[#61C897]" />
-          </label>
-          <div><p className="mb-2 text-sm font-extrabold">Tingkat kelas</p><GradePicker grade={grade} onGrade={onGrade} /></div>
-        </div>
-      </section>
-
-      <section className="mt-8">
-        <h2 className="mb-3 text-xl font-black">Pilih kategori belajar</h2>
-        <CategoryPicker categories={categories} categoryId={categoryId} onCategory={onCategory} />
-      </section>
-
-      <section className="mt-8 grid gap-4 md:grid-cols-2">
-        <button onClick={onLearn} className="rounded-[26px] bg-white p-6 text-left shadow-soft"><span className="text-4xl">📚</span><h3 className="mt-3 text-xl font-black">Kartu kata</h3><p className="mt-1 font-semibold text-slate-500">Baca dan dengarkan kata baru.</p></button>
-        <button onClick={onQuiz} className="rounded-[26px] bg-[#FFF1D6] p-6 text-left"><span className="text-4xl">🧠</span><h3 className="mt-3 text-xl font-black">Kuis seru</h3><p className="mt-1 font-semibold text-slate-500">Jawab dan kumpulkan bintang!</p></button>
-      </section>
-    </>
-  )
+        <div className="mt-auto rounded-3xl bg-[#F0F8F3] p-5"><div className="mb-3 text-3xl">🚀</div><b>Terus semangat!</b><p className="mt-1 text-sm leading-6 text-slate-500">Sedikit belajar setiap hari bikin kamu makin hebat.</p></div>
+      </aside>
+      <main className="min-w-0 flex-1 px-4 pb-8 pt-5 sm:px-7 lg:px-10 lg:pt-8">
+        <header className="mb-7 flex items-center justify-between"><button onClick={() => navigate('home')} className="font-black lg:hidden">🌱 KosaKata</button><div className="hidden sm:block"><p className="text-sm font-bold text-slate-400">Belajar bahasa Inggris</p><p className="mt-1 text-xl font-black">Hai, Sahabat Pintar! 👋</p></div><div className="ml-auto flex items-center gap-2 rounded-full bg-white px-4 py-2 shadow-sm"><GraduationCap size={18}/><span className="text-sm font-extrabold">Kelas {grade} SD</span></div></header>
+        {dataError && <p role="status" className="mb-5 rounded-2xl bg-amber-100 px-4 py-3 text-sm font-bold text-amber-900">{dataError}</p>}
+        {loading && <p className="mb-4 text-sm font-bold text-slate-500">Memuat kosakata…</p>}
+        {page === 'home' && <HomePage categories={categories} categoryId={categoryId} grade={grade} name={studentName} setName={setStudentName} setGrade={setGrade} chooseCategory={chooseCategory} onLearn={() => navigate('learn')} onQuiz={startQuiz} onScores={() => navigate('leaderboard')}/>}
+        {page === 'learn' && <LearnPage categories={categories} categoryId={categoryId} words={visibleWords} word={word} currentWord={currentWord} meaning={showMeaning} saved={word ? savedWords.includes(word.id) : false} chooseCategory={chooseCategory} flip={() => setShowMeaning((value) => !value)} next={() => { setCurrentWord((value) => value + 1); setShowMeaning(false) }} save={() => { if (!word) return; setSavedWords((items) => items.includes(word.id) ? items.filter((id) => id !== word.id) : [...items, word.id]) }} speak={speak} speaking={speaking}/>}
+        {page === 'quiz' && <QuizPage word={quizWord} choices={choices} answer={answer} score={score} index={quizIndex} total={quizWords.length} finished={finished} name={studentName} saved={scoreSaved} category={selectedCategory} choose={chooseAnswer} next={nextQuestion} goHome={() => navigate('home')} goScores={() => navigate('leaderboard')} speak={speak} speaking={speaking}/>}
+        {page === 'leaderboard' && <Leaderboard scores={scores} categories={categories} error={scoreError} refresh={() => { void loadScores() }}/>}
+        <footer className="mt-12 flex items-center justify-center gap-2 text-xs font-bold text-slate-400">Belajar dengan gembira <span>✨</span></footer>
+      </main>
+    </div>
+    <nav className="fixed inset-x-0 bottom-0 z-10 flex justify-around border-t border-slate-100 bg-white/95 px-2 py-2 lg:hidden"><Mobile icon={<Home size={19}/>} label="Beranda" active={page === 'home'} click={() => navigate('home')}/><Mobile icon={<BookOpen size={19}/>} label="Kartu kata" active={page === 'learn'} click={() => navigate('learn')}/><Mobile icon={<CircleHelp size={19}/>} label="Kuis" active={page === 'quiz'} click={startQuiz}/><Mobile icon={<Trophy size={19}/>} label="Papan skor" active={page === 'leaderboard'} click={() => navigate('leaderboard')}/></nav>
+  </div>
 }
 
-function LearnPage({ categories, categoryId, words, word, currentWord, showMeaning, saved, onCategory, onFlip, onNext, onSave, speak, activeSpeech }: {
-  categories: Category[]
-  categoryId: string
-  words: Vocabulary[]
-  word?: Vocabulary
-  currentWord: number
-  showMeaning: boolean
-  saved: boolean
-  onCategory: (id: string) => void
-  onFlip: () => void
-  onNext: () => void
-  onSave: () => void
-  speak: (text: string, id: string) => void
-  activeSpeech: string | null
-}) {
+function Nav({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) {
+  const style = active ? 'bg-[#E7F6ED] text-[#318A60]' : 'text-slate-500 hover:bg-slate-50'
+  return <button onClick={onClick} className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3.5 text-sm font-extrabold ${style}`}>{icon}{label}</button>
+}
+function Mobile({ icon, label, active, click }: { icon: ReactNode; label: string; active: boolean; click: () => void }) {
+  const style = active ? 'text-[#318A60]' : 'text-slate-400'
+  return <button onClick={click} className={`flex min-w-[68px] flex-col items-center gap-1 px-1 text-[10px] font-extrabold ${style}`}>{icon}{label}</button>
+}
+function Speaker({ text, id, speak, speaking }: { text: string; id: string; speak: (text: string, id: string) => void; speaking: string | null }) {
+  const style = speaking === id ? 'animate-pulse bg-[#32875D] text-white' : 'bg-[#EAF7EF] text-[#32875D]'
+  return <button type="button" aria-label={`Dengarkan ${text}`} onClick={(event) => { event.stopPropagation(); speak(text, id) }} className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${style}`}><Volume2 size={22}/></button>
+}
+function CategoryPicker({ categories, categoryId, choose }: { categories: Category[]; categoryId: string; choose: (id: string) => void }) {
+  return <div className="flex flex-wrap gap-2"><button onClick={() => choose('')} className={`min-h-12 rounded-2xl px-4 font-extrabold ${!categoryId ? 'bg-[#32875D] text-white' : 'bg-white shadow-sm'}`}>Semua</button>{categories.map((category) => {
+    const color = CATEGORY_COLORS[category.color] ?? 'bg-white'
+    const style = category.id === categoryId ? 'bg-[#32875D] text-white' : `${color} text-[#25334A]`
+    return <button key={category.id} onClick={() => choose(category.id)} className={`min-h-12 rounded-2xl px-4 font-extrabold ${style}`}>{category.emoji} {category.name}</button>
+  })}</div>
+}
+function GradePicker({ grade, setGrade }: { grade: number; setGrade: (grade: number) => void }) {
+  return <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">{GRADES.map((item) => {
+    const style = grade === item ? 'bg-[#32875D] text-white' : 'bg-white text-slate-600 shadow-sm'
+    return <button key={item} onClick={() => setGrade(item)} className={`min-h-14 rounded-2xl font-black ${style}`}>Kelas {item}</button>
+  })}</div>
+}
+function HomePage({ categories, categoryId, grade, name, setName, setGrade, chooseCategory, onLearn, onQuiz, onScores }: { categories: Category[]; categoryId: string; grade: number; name: string; setName: (name: string) => void; setGrade: (grade: number) => void; chooseCategory: (id: string) => void; onLearn: () => void; onQuiz: () => void; onScores: () => void }) {
+  return <><section className="rounded-[30px] bg-[#DDF5E9] px-6 py-8 sm:px-10"><p className="font-black text-[#438765]">✨ WAKTUNYA BELAJAR!</p><h1 className="mt-4 text-4xl font-black sm:text-5xl">Yuk, tambah kosakata hari ini!</h1><p className="mt-3 font-semibold text-[#567665]">Belajar bahasa Inggris dengan cara seru.</p><div className="mt-6 flex flex-wrap gap-3"><button onClick={onLearn} className="min-h-12 rounded-2xl bg-[#32875D] px-5 font-extrabold text-white">Mulai belajar <ChevronRight className="inline" size={18}/></button><button onClick={onScores} className="min-h-12 rounded-2xl bg-white px-5 font-extrabold"><Trophy className="inline" size={18}/> Papan skor</button></div></section>
+    <section className="mt-8 rounded-[28px] bg-white p-5 shadow-soft"><h2 className="mb-4 text-xl font-black">Nama siswa dan kelas</h2><label className="block font-bold">Nama<input id="student-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={50} placeholder="Contoh: Budi" className="mt-2 min-h-14 w-full rounded-2xl border-2 border-slate-100 px-4"/></label><p className="mb-2 mt-4 font-bold">Pilih kelas</p><GradePicker grade={grade} setGrade={setGrade}/></section>
+    <section className="mt-8"><h2 className="mb-3 text-xl font-black">Pilih kategori</h2><CategoryPicker categories={categories} categoryId={categoryId} choose={chooseCategory}/></section>
+    <button onClick={onQuiz} className="mt-8 rounded-2xl bg-[#FFF1D6] px-6 py-4 font-black">🧠 Mulai kuis seru</button>
+  </>
+}
+function LearnPage({ categories, categoryId, words, word, currentWord, meaning, saved, chooseCategory, flip, next, save, speak, speaking }: { categories: Category[]; categoryId: string; words: Vocabulary[]; word?: Vocabulary; currentWord: number; meaning: boolean; saved: boolean; chooseCategory: (id: string) => void; flip: () => void; next: () => void; save: () => void; speak: (text: string, id: string) => void; speaking: string | null }) {
   const category = categories.find((item) => item.id === categoryId)
-  return (
-    <section className="mx-auto max-w-3xl">
-      <h1 className="mb-5 text-3xl font-black">Kartu kata</h1>
-      <div className="mb-5"><p className="mb-2 font-extrabold">Pilih kategori</p><CategoryPicker categories={categories} categoryId={categoryId} onCategory={onCategory} /></div>
-      {!word ? (
-        <div className="rounded-3xl bg-white p-8 text-center font-bold">Belum ada kata di kategori ini.</div>
-      ) : (
-        <>
-          <div className="mb-4 flex justify-between">
-            <span className="rounded-full bg-white px-4 py-2 font-extrabold">{category?.emoji ?? '📚'} {category?.name ?? 'Semua kategori'}</span>
-            <span className="font-bold text-slate-400">{currentWord % words.length + 1} dari {words.length}</span>
-          </div>
-          <div className="flex min-h-[350px] flex-col items-center justify-center rounded-[32px] bg-white p-7 text-center shadow-soft">
-            <span className="text-7xl">{word.emoji}</span>
-            <h2 className="mt-5 text-4xl font-black">{showMeaning ? word.indonesian : word.english}</h2>
-            <p className="mt-2 font-bold text-slate-400">{showMeaning ? word.english : word.pronunciation}</p>
-            <div className="mt-5 flex gap-3">
-              <Speaker text={word.english} id={`word-${word.id}`} speak={speak} activeSpeech={activeSpeech} />
-              <button onClick={onFlip} className="min-h-12 rounded-2xl bg-[#F0F8F3] px-5 font-extrabold text-[#32875D]">{showMeaning ? 'Lihat kata' : 'Lihat artinya'}</button>
-            </div>
-            <div className="mt-7 flex max-w-xl items-center gap-3 rounded-2xl bg-[#F7FAF8] p-4 text-left">
-              <div><p className="text-xs font-black uppercase text-slate-400">Contoh kalimat</p><p className="mt-1 font-bold">“{word.example}”</p></div>
-              <Speaker text={word.example} id={`example-${word.id}`} speak={speak} activeSpeech={activeSpeech} />
-            </div>
-          </div>
-          <div className="mt-5 flex justify-center gap-3">
-            <button onClick={onSave} className={`min-h-12 rounded-2xl px-5 font-extrabold ${saved ? 'bg-rose-100 text-rose-600' : 'bg-white shadow-sm'}`}>{saved ? '♥ Tersimpan' : '♡ Simpan kata'}</button>
-            <button onClick={onNext} className="inline-flex min-h-12 items-center gap-2 rounded-2xl bg-[#32875D] px-5 font-extrabold text-white">Kata berikutnya <ChevronRight size={18} /></button>
-          </div>
-        </>
-      )}
-    </section>
-  )
+  return <section className="mx-auto max-w-3xl"><h1 className="mb-5 text-3xl font-black">Kartu kata</h1><div className="mb-5"><p className="mb-2 font-bold">Kategori</p><CategoryPicker categories={categories} categoryId={categoryId} choose={chooseCategory}/></div>{!word ? <p className="rounded-3xl bg-white p-8">Belum ada kosakata pada kategori ini.</p> : <><div className="mb-4 flex justify-between"><span className="rounded-full bg-white px-4 py-2 font-bold">{category?.emoji ?? '📚'} {category?.name ?? 'Semua kategori'}</span><span>{currentWord % words.length + 1} / {words.length}</span></div><div className="flex min-h-[350px] flex-col items-center justify-center rounded-[32px] bg-white p-8 text-center shadow-soft"><span className="text-7xl">{word.emoji}</span><h2 className="mt-5 text-4xl font-black">{meaning ? word.indonesian : word.english}</h2><p className="mt-2 text-slate-500">{meaning ? word.english : word.pronunciation}</p><div className="mt-5 flex gap-3"><Speaker text={word.english} id={`word-${word.id}`} speak={speak} speaking={speaking}/><button onClick={flip} className="rounded-2xl bg-[#EAF7EF] px-5 font-bold">{meaning ? 'Lihat kata' : 'Lihat arti'}</button></div><div className="mt-7 flex items-center gap-3 rounded-2xl bg-[#F7FAF8] p-4"><p className="font-bold">“{word.example}”</p><Speaker text={word.example} id={`example-${word.id}`} speak={speak} speaking={speaking}/></div></div><div className="mt-5 flex justify-center gap-3"><button onClick={save} className="rounded-2xl bg-white px-5 py-3 font-bold">{saved ? '♥ Tersimpan' : '♡ Simpan'}</button><button onClick={next} className="rounded-2xl bg-[#32875D] px-5 py-3 font-bold text-white">Berikutnya <ChevronRight className="inline"/></button></div></>}</section>
 }
-
-function QuizPage({ word, options, selected, score, index, total, finished, name, scoreSaved, category, onAnswer, onNext, onBack, onLeaderboard, speak, activeSpeech }: {
-  word?: Vocabulary
-  options: Vocabulary[]
-  selected: string | null
-  score: number
-  index: number
-  total: number
-  finished: boolean
-  name: string
-  scoreSaved: boolean
-  category: Category | null
-  onAnswer: (answer: string) => void
-  onNext: () => void
-  onBack: () => void
-  onLeaderboard: () => void
-  speak: (text: string, id: string) => void
-  activeSpeech: string | null
-}) {
-  if (finished) {
-    return (
-      <section className="mx-auto max-w-2xl rounded-[32px] bg-white p-10 text-center shadow-soft">
-        <div className="text-6xl">🏆</div>
-        <h1 className="mt-4 text-3xl font-black">Hebat, {name}!</h1>
-        <p className="mt-2 text-xl font-extrabold">Skormu {score} dari {total}</p>
-        <p className="mt-3 font-semibold text-slate-500">{scoreSaved ? 'Skor tersimpan di papan skor.' : 'Skor tersimpan jika Supabase terhubung.'}</p>
-        <div className="mt-6 flex justify-center gap-3">
-          <button onClick={onBack} className="inline-flex min-h-12 items-center gap-2 rounded-2xl bg-[#32875D] px-5 font-extrabold text-white"><RotateCcw size={17} /> Belajar lagi</button>
-          <button onClick={onLeaderboard} className="inline-flex min-h-12 items-center gap-2 rounded-2xl bg-[#FFF1D6] px-5 font-extrabold"><Trophy size={17} /> Papan skor</button>
-        </div>
-      </section>
-    )
-  }
-
-  if (!word || total === 0) {
-    return <section className="rounded-3xl bg-white p-8 text-center"><p className="font-bold">Belum ada kosakata untuk kuis ini.</p><button onClick={onBack} className="mt-4 font-extrabold text-[#32875D]">Kembali</button></section>
-  }
-
-  return (
-    <section className="mx-auto max-w-2xl">
-      <div className="mb-5 flex items-center justify-between">
-        <div><p className="text-xs font-black uppercase tracking-widest text-slate-400">Kuis seru</p><h1 className="text-2xl font-black">Ayo jawab, {name}!</h1></div>
-        <span className="rounded-full bg-white px-4 py-2 font-extrabold">⭐ {score}</span>
-      </div>
-      <div className="rounded-[30px] bg-white p-6 shadow-soft sm:p-9">
-        <div className="mb-6 flex justify-between"><span className="rounded-full bg-[#F2F8F4] px-4 py-2 font-extrabold">Soal {index + 1} / {total}</span><span className="font-bold text-slate-400">{category?.name ?? 'Semua kategori'}</span></div>
-        <div className="mb-6 flex items-center justify-center gap-3 rounded-3xl bg-[#F7FAF8] p-6">
-          <span className="text-5xl">{word.emoji}</span>
-          <div className="text-center"><p className="text-sm text-slate-400">Apa arti kata ini?</p><p className="text-3xl font-black">{word.english}</p></div>
-          <Speaker text={word.english} id={`quiz-${word.id}`} speak={speak} activeSpeech={activeSpeech} />
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {options.map((option) => {
-            const correct = option.indonesian === word.indonesian
-            const chosen = selected === option.indonesian
-            let className = 'border-slate-100 bg-white hover:border-[#75C99A]'
-            if (selected && correct) className = 'border-[#4BB77D] bg-[#E4F7EB] text-[#287A4F]'
-            else if (selected && chosen) className = 'border-rose-300 bg-rose-50 text-rose-700'
-            else if (selected) className = 'border-slate-100 text-slate-400'
-            return (
-              <button key={option.id} onClick={() => onAnswer(option.indonesian)} disabled={Boolean(selected)} className={`flex min-h-16 items-center justify-between rounded-2xl border-2 px-4 text-left font-extrabold ${className}`}>
-                <span>{option.indonesian}</span>{selected && correct && <Check size={19} />}
-              </button>
-            )
-          })}
-        </div>
-        {selected && <p className="mt-5 rounded-2xl bg-[#F7FAF8] p-4 text-center font-bold">{selected === word.indonesian ? '🎉 Betul sekali!' : `Belum tepat. Jawabannya ${word.indonesian}.`}</p>}
-        <div className="mt-6 flex justify-between">
-          <button onClick={onBack} className="inline-flex min-h-12 items-center gap-2 px-4 font-extrabold text-slate-500"><ChevronLeft size={18} /> Keluar</button>
-          <button onClick={onNext} disabled={!selected} className="inline-flex min-h-12 items-center gap-2 rounded-2xl bg-[#32875D] px-5 font-extrabold text-white disabled:opacity-40">{index + 1 === total ? 'Lihat skor' : 'Soal berikutnya'} <ChevronRight size={18} /></button>
-        </div>
-      </div>
-    </section>
-  )
+function QuizPage({ word, choices, answer, score, index, total, finished, name, saved, category, choose, next, goHome, goScores, speak, speaking }: { word?: Vocabulary; choices: Vocabulary[]; answer: string | null; score: number; index: number; total: number; finished: boolean; name: string; saved: boolean; category: Category | null; choose: (answer: string) => void; next: () => void; goHome: () => void; goScores: () => void; speak: (text: string, id: string) => void; speaking: string | null }) {
+  if (finished) return <section className="mx-auto max-w-2xl rounded-[32px] bg-white p-10 text-center"><Trophy className="mx-auto text-amber-500" size={56}/><h1 className="mt-4 text-3xl font-black">Hebat, {name}!</h1><p className="mt-2 text-xl font-bold">Skor {score} dari {total}</p><p className="mt-3">{saved ? 'Skor tersimpan!' : 'Skor tidak dapat disimpan ke Supabase.'}</p><button onClick={goScores} className="mt-5 rounded-2xl bg-[#FFF1D6] px-5 py-3 font-bold">Lihat papan skor</button></section>
+  if (!word || total === 0) return <section className="rounded-3xl bg-white p-8">Belum ada kata untuk kuis ini.</section>
+  return <section className="mx-auto max-w-2xl"><div className="mb-5 flex justify-between"><h1 className="text-2xl font-black">Kuis seru, {name}!</h1><b>⭐ {score}</b></div><div className="rounded-[30px] bg-white p-6 shadow-soft"><div className="mb-5 flex justify-between"><b>Soal {index + 1} / {total}</b><span>{category?.name ?? 'Semua kategori'}</span></div><div className="mb-5 flex items-center justify-center gap-3 rounded-3xl bg-[#F7FAF8] p-6"><span className="text-5xl">{word.emoji}</span><b className="text-3xl">{word.english}</b><Speaker text={word.english} id={`quiz-${word.id}`} speak={speak} speaking={speaking}/></div><div className="grid gap-3 sm:grid-cols-2">{choices.map((item) => {
+    const correct = item.indonesian === word.indonesian
+    const style = answer ? (correct ? 'border-green-400 bg-green-50' : answer === item.indonesian ? 'border-rose-300 bg-rose-50' : 'border-slate-100') : 'border-slate-100 hover:border-green-300'
+    return <button key={item.id} disabled={Boolean(answer)} onClick={() => choose(item.indonesian)} className={`min-h-14 rounded-2xl border-2 p-3 text-left font-bold ${style}`}>{item.indonesian}{answer && correct && <Check className="float-right"/>}</button>
+  })}</div>{answer && <p className="mt-4 text-center font-bold">{answer === word.indonesian ? '🎉 Betul!' : `Jawaban: ${word.indonesian}`}</p>}<div className="mt-5 flex justify-between"><button onClick={goHome} className="font-bold text-slate-500"><ChevronLeft className="inline"/> Keluar</button><button disabled={!answer} onClick={next} className="rounded-2xl bg-[#32875D] px-5 py-3 font-bold text-white disabled:opacity-40">{index + 1 === total ? 'Selesai' : 'Berikutnya'} <ChevronRight className="inline"/></button></div></div></section>
 }
-
-function LeaderboardPage({ scores, categories, message, onRefresh }: { scores: QuizScore[]; categories: Category[]; message: string; onRefresh: () => void }) {
-  const medals = [
-    <Crown size={22} className="text-amber-500" key="gold" />,
-    <Medal size={22} className="text-slate-400" key="silver" />,
-    <Medal size={22} className="text-orange-500" key="bronze" />,
-  ]
-
-  return (
-    <section className="mx-auto max-w-3xl">
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-        <div><p className="text-xs font-black uppercase tracking-widest text-slate-400">Juara kosakata</p><h1 className="mt-1 text-3xl font-black">🏆 Papan Skor</h1><p className="mt-2 font-semibold text-slate-500">Sepuluh skor terbaik teman-teman!</p></div>
-        <button onClick={onRefresh} className="inline-flex min-h-11 items-center gap-2 rounded-2xl bg-white px-4 font-extrabold shadow-sm"><RefreshCw size={17} /> Perbarui</button>
-      </div>
-      {message && <p role="status" className="mb-4 rounded-2xl bg-amber-100 px-4 py-3 text-sm font-bold text-amber-900">{message}</p>}
-      <div className="overflow-hidden rounded-[28px] bg-white shadow-soft">
-        <div className="grid grid-cols-[52px_1fr_auto] gap-3 bg-[#DDF5E9] px-4 py-4 text-xs font-black uppercase text-[#438765] sm:grid-cols-[64px_1fr_1fr_auto]">
-          <span>Peringkat</span><span>Nama</span><span className="hidden sm:block">Kategori</span><span>Skor</span>
-        </div>
-        {scores.length > 0 ? scores.map((item, index) => {
-          const rank: ReactNode = index < 3 ? medals[index] : index + 1
-          const category = categories.find((entry) => entry.id === item.category_id)
-          const categoryName = category?.name ?? 'Semua kategori'
-          return (
-            <div key={item.id ?? `${item.player_name}-${index}`} className={`grid grid-cols-[52px_1fr_auto] items-center gap-3 border-t px-4 py-4 sm:grid-cols-[64px_1fr_1fr_auto] ${index < 3 ? 'bg-amber-50/40' : ''}`}>
-              <span className="grid h-10 w-10 place-items-center rounded-full bg-[#F7FAF8] font-black">{rank}</span>
-              <span className="font-extrabold">{item.player_name}</span>
-              <span className="hidden text-sm font-bold text-slate-500 sm:block">{categoryName}</span>
-              <span className="rounded-xl bg-[#FFF1D6] px-3 py-2 text-sm font-black">{item.score}/{item.total_questions}</span>
-            </div>
-          )
-        }) : (
-          <div className="p-10 text-center"><span className="text-5xl">🌟</span><p className="mt-3 font-extrabold">Belum ada skor. Jadilah yang pertama!</p></div>
-        )}
-      </div>
-      <p className="mt-3 text-xs font-semibold text-slate-400">Papan skor diperbarui otomatis saat ada hasil kuis baru.</p>
-    </section>
-  )
+function Leaderboard({ scores, categories, error, refresh }: { scores: QuizScore[]; categories: Category[]; error: string; refresh: () => void }) {
+  const medals = [<Crown className="text-amber-500" key="first"/>, <Medal className="text-slate-400" key="second"/>, <Medal className="text-orange-500" key="third"/>]
+  return <section className="mx-auto max-w-3xl"><div className="mb-5 flex items-center justify-between"><h1 className="text-3xl font-black">🏆 Papan Skor</h1><button onClick={refresh} className="rounded-xl bg-white p-3 font-bold"><RefreshCw className="inline" size={17}/> Perbarui</button></div>{error && <p role="status" className="mb-4 rounded-xl bg-amber-100 p-3 font-bold">{error}</p>}<div className="overflow-hidden rounded-3xl bg-white"><div className="grid grid-cols-[55px_1fr_auto] bg-[#DDF5E9] p-4 font-black"><span>#</span><span>Nama</span><span>Skor</span></div>{scores.length ? scores.map((item, index) => {
+    const rank: ReactNode = index < 3 ? medals[index] : index + 1
+    const category = categories.find((entry) => entry.id === item.category_id)
+    return <div key={item.id ?? `${item.player_name}-${index}`} className="grid grid-cols-[55px_1fr_auto] items-center border-t p-4"><span>{rank}</span><b>{item.player_name}<small className="block text-slate-400">{category?.name ?? 'Semua kategori'}</small></b><b>{item.score}/{item.total_questions}</b></div>
+  }) : <p className="p-8 text-center font-bold">Belum ada skor. Jadilah yang pertama!</p>}</div><p className="mt-3 text-xs text-slate-400">Papan skor diperbarui otomatis.</p></section>
 }
 
 export default App

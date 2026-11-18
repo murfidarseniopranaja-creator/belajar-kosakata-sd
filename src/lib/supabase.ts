@@ -5,7 +5,7 @@ export interface Category {
   name: string
   emoji: string
   color: string
-  sort_order: number
+  sort_order?: number
   created_at?: string
 }
 
@@ -30,14 +30,10 @@ export interface QuizScore {
 }
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
-const supabaseKey = (
-  import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
-)?.trim()
+const supabaseKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY)?.trim()
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey)
-export const supabase = isSupabaseConfigured && supabaseUrl && supabaseKey
-  ? createClient(supabaseUrl, supabaseKey)
-  : null
+export const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
 
 export const SAMPLE_CATEGORIES: Category[] = [
   { id: 'animals', name: 'Hewan', emoji: '🐼', color: 'mint', sort_order: 1 },
