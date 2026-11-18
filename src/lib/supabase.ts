@@ -29,14 +29,14 @@ export interface QuizScore {
   created_at?: string
 }
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
+const supabaseKey = (
+  import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+)?.trim()
 
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey)
-
-// The client stays null in local/demo mode so the app works without credentials.
-export const supabase = isSupabaseConfigured
-  ? createClient(supabaseUrl, supabaseAnonKey)
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey)
+export const supabase = isSupabaseConfigured && supabaseUrl && supabaseKey
+  ? createClient(supabaseUrl, supabaseKey)
   : null
 
 export const SAMPLE_CATEGORIES: Category[] = [
