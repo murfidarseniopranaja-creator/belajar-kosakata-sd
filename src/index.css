@@ -14,7 +14,8 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; }
-button { font: inherit; }
+button { font: inherit; cursor: pointer; }
+button:disabled { cursor: not-allowed; }
 ::selection { background: #d7f0e2; color: #25334a; }
 
 @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
