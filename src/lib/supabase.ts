@@ -29,11 +29,12 @@ export interface QuizScore {
   created_at?: string
 }
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
-const supabaseKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY)?.trim()
+const rawUrl = import.meta.env.VITE_SUPABASE_URL?.trim() ?? ''
+const supabaseUrl = rawUrl.startsWith('https://') ? rawUrl : ''
+const supabaseKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY)?.trim() ?? ''
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey)
-export const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
+export const supabase = isSupabaseConfigured ? createClient(supabaseUrl, supabaseKey) : null
 
 export const SAMPLE_CATEGORIES: Category[] = [
   { id: 'animals', name: 'Hewan', emoji: '🐼', color: 'mint', sort_order: 1 },
