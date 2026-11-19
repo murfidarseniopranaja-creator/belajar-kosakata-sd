@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { ArrowRight, BookOpen, Check, CheckCircle2, ChevronRight, CircleHelp, Crown, GraduationCap, HelpCircle, Home, Lightbulb, Medal, PenTool, RefreshCw, RotateCcw, Shuffle, Sparkles, Trophy, Volume2, XCircle, Loader2, Globe, CloudDownload } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ArrowRight, BookOpen, CheckCircle2, ChevronRight, CircleHelp, Crown, GraduationCap, HelpCircle, Home, Lightbulb, Loader2, Medal, PenTool, RefreshCw, RotateCcw, Shuffle, Sparkles, Trophy, Volume2, XCircle, Globe, CloudDownload } from 'lucide-react'
 import { SAMPLE_CATEGORIES, SAMPLE_VOCABULARY, supabase, type Category, type QuizScore, type Vocabulary } from './lib/supabase'
 
 type Page = 'home' | 'learn' | 'practice' | 'quiz' | 'leaderboard'
@@ -12,23 +12,12 @@ const MODES: { value: QuizMode; label: string }[] = [
   { value: 'written', label: 'Tebak Gambar — Tulis Bahasa Inggris (50 Soal)' },
   { value: 'mixed', label: 'Campuran: Pilihan Ganda + Tulis Jawaban (50 Soal)' },
 ]
-const TOPICS: Record<string, string> = {
-  hewan: 'animals',
-  'buah & makanan': 'food,fruit',
-  keluarga: 'family',
-  'benda di sekolah': 'school,classroom',
-  'warna & angka': 'colors,numbers',
-}
-const EMOJI_BY_TOPIC: Record<string, string> = {
-  hewan: '🐾', 'buah & makanan': '🍎', keluarga: '👨‍👩‍👧‍👦', 'benda di sekolah': '🎒', 'warna & angka': '🎨',
-}
+const TOPICS: Record<string, string> = { hewan: 'animals', 'buah & makanan': 'food,fruit', keluarga: 'family', 'benda di sekolah': 'school,classroom', 'warna & angka': 'colors,numbers' }
+const EMOJIS: Record<string, string> = { hewan: '🐾', 'buah & makanan': '🍎', keluarga: '👨‍👩‍👧‍👦', 'benda di sekolah': '🎒', 'warna & angka': '🎨' }
 
-function shuffle<T,>(values: T[]): T[] {
-  const result = [...values]
-  for (let i = result.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[result[i], result[j]] = [result[j], result[i]]
-  }
+function shuffle<T,>(input: T[]): T[] {
+  const result = [...input]
+  for (let i = result.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [result[i], result[j]] = [result[j], result[i]] }
   return result
 }
 function normalizeCategory(row: Partial<Category> | null | undefined): Category {
@@ -40,15 +29,10 @@ function normalizeWord(row: Partial<Vocabulary> | null | undefined): Vocabulary 
 function normalizeScore(row: Partial<QuizScore> | null | undefined): QuizScore {
   return { id: row?.id, student_name: row?.student_name ?? 'Siswa', grade_level: Number(row?.grade_level ?? 1), category_name: row?.category_name ?? '', score: Number(row?.score ?? 0), total_questions: Number(row?.total_questions ?? 0), created_at: row?.created_at }
 }
-async function translateToIndonesian(text: string): Promise<string> {
-  try {
-    const response = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|id`)
-    if (!response.ok) return ''
-    const result = await response.json() as { responseData?: { translatedText?: string } }
-    return result.responseData?.translatedText ?? ''
-  } catch { return '' }
+async function translate(text: string): Promise<string> {
+  try { const r = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|id`); if (!r.ok) return ''; const j = await r.json() as { responseData?: { translatedText?: string } }; return j.responseData?.translatedText ?? '' } catch { return '' }
 }
-async function getOnlineWord(word: string, categoryId: string, grade: number, emoji: string): Promise<Vocabulary | null> {
+async function onlineWord(word: string, categoryId: string, grade: number, emoji: string): Promise<Vocabulary | null> {
   try {
     const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`)
     if (!response.ok) return null
@@ -56,8 +40,8 @@ async function getOnlineWord(word: string, categoryId: string, grade: number, em
     const entry = data?.[0]
     const phonetic = entry?.phonetics?.find((item) => item?.text)?.text ?? ''
     const example = entry?.meanings?.flatMap((meaning) => meaning?.definitions ?? []).find((definition) => definition?.example)?.example ?? `I learn the word ${word} at school.`
-    const [translation, exampleTranslation] = await Promise.all([translateToIndonesian(word), translateToIndonesian(example)])
-    return { id: `online-${word.toLowerCase()}`, category_id: categoryId, grade_level: grade, word_en: word, phonetic, word_id: translation || word, example_en: example, example_id: exampleTranslation, image_emoji: emoji }
+    const [wordId, exampleId] = await Promise.all([translate(word), translate(example)])
+    return normalizeWord({ id: `online-${word.toLowerCase()}`, category_id: categoryId, grade_level: grade, word_en: word, phonetic, word_id: wordId || word, example_en: example, example_id: exampleId, image_emoji: emoji })
   } catch { return null }
 }
 async function fetchOnlineVocabularies(categoryName: string, categoryId: string, grade: number, current: Vocabulary[]): Promise<Vocabulary[]> {
@@ -66,26 +50,26 @@ async function fetchOnlineVocabularies(categoryName: string, categoryId: string,
   try {
     const response = await fetch(`https://api.datamuse.com/words?topics=${encodeURIComponent(topics)}&md=f&max=40`)
     if (!response.ok) return []
-    const results = await response.json() as Array<{ word?: string }>
+    const rows = await response.json() as Array<{ word?: string }>
     const known = new Set(current.map((item) => (item?.word_en ?? '').trim().toLowerCase()))
-    const fresh = results.map((item) => item?.word ?? '').filter((word) => /^[a-z]{3,10}$/.test(word) && !known.has(word.toLowerCase())).slice(0, 15)
-    const emoji = EMOJI_BY_TOPIC[normalized] ?? '📘'
-    const created: Vocabulary[] = []
-    for (let offset = 0; offset < fresh.length; offset += 5) {
-      const batch = await Promise.allSettled(fresh.slice(offset, offset + 5).map((word) => getOnlineWord(word, categoryId, grade, emoji)))
-      batch.forEach((result) => { if (result.status === 'fulfilled' && result.value) created.push(result.value) })
+    const fresh = rows.map((item) => item?.word ?? '').filter((word) => /^[a-z]{3,10}$/.test(word) && !known.has(word.toLowerCase())).slice(0, 15)
+    const emoji = EMOJIS[normalized] ?? '📘'
+    const added: Vocabulary[] = []
+    for (let i = 0; i < fresh.length; i += 5) {
+      const results = await Promise.allSettled(fresh.slice(i, i + 5).map((word) => onlineWord(word, categoryId || 'nature', grade, emoji)))
+      results.forEach((result) => { if (result.status === 'fulfilled' && result.value) added.push(result.value) })
     }
-    return created
+    return added
   } catch { return [] }
 }
-function makeQuestions(pool: Vocabulary[], all: Vocabulary[], mode: QuizMode): Question[] {
+function buildQuestions(pool: Vocabulary[], all: Vocabulary[], mode: QuizMode): Question[] {
   if (!all.length) return []
-  const list = shuffle(pool.length ? pool : all).slice(0, 50)
-  while (list.length < 50) list.push(all[Math.floor(Math.random() * all.length)])
-  return list.map((word, index) => {
+  const selected = shuffle(pool.length ? pool : all).slice(0, 50)
+  while (selected.length < 50) selected.push(all[Math.floor(Math.random() * all.length)])
+  return selected.map((word, index) => {
     const kind = mode === 'mixed' ? (index % 2 === 0 ? 'multiple-choice' : 'written') : mode
-    const distractors = shuffle(all.filter((item) => item.id !== word.id && (item.word_id ?? '').toLowerCase() !== (word.word_id ?? '').toLowerCase())).slice(0, 3)
-    return { word, mode: kind, options: shuffle([word, ...distractors]) }
+    const wrong = shuffle(all.filter((item) => item.id !== word.id && (item.word_id ?? '').toLowerCase() !== (word.word_id ?? '').toLowerCase())).slice(0, 3)
+    return { word, mode: kind, options: shuffle([word, ...wrong]) }
   })
 }
 
@@ -154,9 +138,10 @@ function App() {
     async function loadData() {
       if (!supabase) { setLoading(false); setError('Supabase belum dikonfigurasi. Data contoh ditampilkan.'); return }
       try {
+        const db = supabase as any
         const [categoryResult, wordResult] = await Promise.all([
-          supabase.from('categories').select('id, name_en, name_id, icon_emoji, color_theme, sort_order').order('sort_order', { ascending: true }),
-          supabase.from('vocabularies').select('id, category_id, grade_level, word_en, phonetic, word_id, example_en, example_id, image_emoji').order('word_en', { ascending: true }),
+          db.from('categories').select('id, name_en, name_id, icon_emoji, color_theme, sort_order').order('sort_order', { ascending: true }),
+          db.from('vocabularies').select('id, category_id, grade_level, word_en, phonetic, word_id, example_en, example_id, image_emoji').order('word_en', { ascending: true }),
         ])
         if (!mounted) return
         if (categoryResult.error || wordResult.error) setError(categoryResult.error?.message ?? wordResult.error?.message ?? 'Gagal memuat Supabase.')
@@ -178,7 +163,8 @@ function App() {
     if (!supabase) { setScores([]); return }
     setScoresLoading(true)
     try {
-      const { data, error: queryError } = await supabase.from('quiz_scores').select('*').order('score', { ascending: false }).order('created_at', { ascending: false }).limit(20)
+      const db = supabase as any
+      const { data, error: queryError } = await db.from('quiz_scores').select('*').order('score', { ascending: false }).order('created_at', { ascending: false }).limit(20)
       if (queryError) { setError(queryError.message); return }
       setScores((data ?? []).map(normalizeScore)); setError('')
     } catch (loadError) { setError(loadError instanceof Error ? loadError.message : String(loadError ?? '')) }
@@ -213,36 +199,27 @@ function App() {
   const question = questions[questionIndex]
   const quizWord = question?.word
 
-  const loadOnlineWords = useCallback(async (targetCategoryId: string, showNotice = true) => {
+  const loadOnline = async () => {
     if (!onlineSource || onlineLoading) return
     setOnlineLoading(true)
-    const targetCategory = safeCategories.find((item) => item.id === targetCategoryId) ?? null
-    const name = targetCategory?.name_id ?? ''
-    const newWords = await fetchOnlineVocabularies(name, targetCategoryId || 'nature', grade, safeWords)
-    if (newWords.length) {
-      setWords((current) => [...current, ...newWords.filter((item) => !current.some((existing) => (existing.word_en ?? '').toLowerCase() === (item.word_en ?? '').toLowerCase()))])
-      if (supabase) void supabase.from('vocabularies').insert(newWords).then(() => undefined).catch(() => undefined)
-      if (showNotice) {
-        setOnlineNotice(`+${newWords.length} kosakata online baru dimuat`)
-        if (noticeTimer) clearTimeout(noticeTimer)
-        setNoticeTimer(setTimeout(() => setOnlineNotice(''), 3500))
-      }
-    } else if (showNotice) {
-      setOnlineNotice('Tidak ada kosakata online baru untuk filter ini.')
+    try {
+      const name = safeCategories.find((item) => item.id === categoryId)?.name_id ?? ''
+      const added = await fetchOnlineVocabularies(name, categoryId || 'nature', grade, safeWords)
+      if (added.length) {
+        setWords((current) => [...current, ...added.filter((item) => !current.some((existing) => (existing.word_en ?? '').toLowerCase() === (item.word_en ?? '').toLowerCase()))])
+        if (supabase) { const db = supabase as any; void db.from('vocabularies').insert(added).then(() => undefined).catch(() => undefined) }
+        setOnlineNotice(`+${added.length} kosakata online baru dimuat`)
+      } else setOnlineNotice('Tidak ada kosakata online baru untuk filter ini.')
       if (noticeTimer) clearTimeout(noticeTimer)
-      setNoticeTimer(setTimeout(() => setOnlineNotice(''), 3000))
-    }
-    setOnlineLoading(false)
-  }, [onlineSource, onlineLoading, safeCategories, grade, safeWords, noticeTimer])
-
+      setNoticeTimer(setTimeout(() => setOnlineNotice(''), 3500))
+    } catch { setOnlineNotice('Sumber online tidak tersedia saat ini.') }
+    finally { setOnlineLoading(false) }
+  }
   useEffect(() => {
     if (!onlineSource || loading || onlineAttempted.current) return
-    const count = safeWords.filter((item) => (!categoryId || item?.category_id === categoryId) && Number(item?.grade_level ?? grade) === grade).length
-    if (count < 5) {
-      onlineAttempted.current = true
-      void loadOnlineWords(categoryId, false)
-    }
-  }, [onlineSource, loading, categoryId, grade, safeWords, loadOnlineWords])
+    const count = safeWords.filter((item) => (!categoryId || item.category_id === categoryId) && Number(item.grade_level ?? grade) === grade).length
+    if (count < 5) { onlineAttempted.current = true; void loadOnline() }
+  }, [onlineSource, loading, categoryId, grade, safeWords])
 
   const speakSequence = (parts: { text: string; lang: string; rate: number }[], done?: () => void) => {
     cancelSpeech()
@@ -317,7 +294,8 @@ function App() {
     setScore(finalScore); setFinished(true); setQuizStarted(false)
     if (!supabase) return
     try {
-      const { error: insertError } = await supabase.from('quiz_scores').insert([{ student_name: studentName.trim() || 'Siswa', grade_level: grade, category_name: category?.name_id ?? category?.name_en ?? 'Semua Kategori', score: finalScore, total_questions: questions.length }])
+      const db = supabase as any
+      const { error: insertError } = await db.from('quiz_scores').insert([{ student_name: studentName.trim() || 'Siswa', grade_level: grade, category_name: category?.name_id ?? category?.name_en ?? 'Semua Kategori', score: finalScore, total_questions: questions.length }])
       if (insertError) { setError(`Gagal menyimpan skor: ${insertError.message}`); return }
       setScoreSaved(true); await loadScores()
     } catch (saveError) { setError(saveError instanceof Error ? saveError.message : String(saveError ?? 'Gagal menyimpan skor.')) }
@@ -341,69 +319,19 @@ function App() {
     else speakSequence([{ text: `Belum tepat. Bahasa Inggrisnya ${idWord} adalah ${english}, dieja ${english.toUpperCase().split('').join(', ')}`, lang: 'id-ID', rate: .95 }, { text: english, lang: 'en-US', rate: .85 }])
   }
   const practiceShuffle = () => { cancelSpeech(); const filtered = safeWords.filter((item) => (practiceGrade === null || Number(item?.grade_level ?? 0) === practiceGrade) && (!practiceCategory || item?.category_id === practiceCategory)); setPracticePool(shuffle(filtered)); setPracticeIndex(0); setPracticeInput(''); setPracticeChecked(false); setPracticeCorrect(null); setHint(false) }
-  const loadOnline = async () => {
-    if (!onlineSource || onlineLoading) return
-    setOnlineLoading(true)
-    const name = safeCategories.find((item) => item.id === categoryId)?.name_id ?? ''
-    const topics = TOPICS[name.trim().toLowerCase()] ?? 'nature,home,elementary'
-    let created: Vocabulary[] = []
-    try {
-      const res = await fetch(`https://api.datamuse.com/words?topics=${encodeURIComponent(topics)}&md=f&max=40`)
-      const list = res.ok ? await res.json() as Array<{ word?: string }> : []
-      const exists = new Set(safeWords.map((item) => (item?.word_en ?? '').toLowerCase()))
-      const candidates = list.map((item) => item.word ?? '').filter((w) => /^[a-z]{3,10}$/.test(w) && !exists.has(w.toLowerCase())).slice(0, 15)
-      const emoji = EMOJI_BY_TOPIC[name.trim().toLowerCase()] ?? '📘'
-      for (let start = 0; start < candidates.length; start += 5) {
-        const settled = await Promise.allSettled(candidates.slice(start, start + 5).map(async (w) => {
-          const dictResponse = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(w)}`)
-          if (!dictResponse.ok) return null
-          const dictionary = await dictResponse.json() as Array<{ phonetics?: Array<{ text?: string }>; meanings?: Array<{ definitions?: Array<{ example?: string }> }> }>
-          const entry = dictionary?.[0]
-          const phonetic = entry?.phonetics?.find((p) => p?.text)?.text ?? ''
-          const example = entry?.meanings?.flatMap((m) => m?.definitions ?? []).find((d) => d?.example)?.example ?? `I learn the word ${w} at school.`
-          const translate = async (text: string) => {
-            try {
-              const response = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|id`)
-              const data = response.ok ? await response.json() as { responseData?: { translatedText?: string } } : {}
-              return data.responseData?.translatedText ?? ''
-            } catch { return '' }
-          }
-          const [wordId, exampleId] = await Promise.all([translate(w), translate(example)])
-          return normalizeWord({ id: `online-${w}`, category_id: categoryId || 'nature', grade_level: grade, word_en: w, phonetic, word_id: wordId || w, example_en: example, example_id: exampleId, image_emoji: emoji })
-        }))
-        settled.forEach((item) => { if (item.status === 'fulfilled' && item.value) created.push(item.value) })
-      }
-    } catch { /* Online services are optional; keep local and Supabase words available. */ }
-    if (created.length) {
-      setWords((old) => [...old, ...created.filter((item) => !old.some((entry) => entry.word_en.toLowerCase() === item.word_en.toLowerCase()))])
-      if (supabase) void supabase.from('vocabularies').insert(created).then(() => undefined).catch(() => undefined)
-      setOnlineNotice(`+${created.length} kosakata online baru dimuat`)
-      if (noticeTimer) clearTimeout(noticeTimer)
-      setNoticeTimer(setTimeout(() => setOnlineNotice(''), 3500))
-    } else setOnlineNotice('Tidak ada kosakata online baru untuk filter ini.')
-    setOnlineLoading(false)
-  }
-
-  useEffect(() => {
-    if (!onlineSource || loading || onlineAttempted.current) return
-    const count = safeWords.filter((item) => (!categoryId || item.category_id === categoryId) && Number(item.grade_level ?? grade) === grade).length
-    if (count < 5) { onlineAttempted.current = true; void loadOnline() }
-  }, [onlineSource, loading, categoryId, grade, safeWords])
 
   return <div className="min-h-screen bg-[#F6FBF8] pb-20 text-[#25334A]"><header className="mx-auto flex max-w-5xl items-center justify-between p-5"><button onClick={() => goTo('home')} className="flex items-center gap-2 text-xl font-black">🌱 KosaKata</button><label className="flex items-center gap-2 rounded-full bg-white px-4 py-2 font-bold"><GraduationCap size={18}/><select value={grade} onChange={(e) => setGrade(Number(e.target.value))} className="bg-transparent">{GRADES.map((item) => <option key={item} value={item}>Kelas {item} SD</option>)}</select></label></header>
     <main className="mx-auto max-w-5xl px-4 pb-8">{error && <p role="status" className="mb-4 rounded-2xl bg-amber-100 p-4 font-bold">{error}</p>}{onlineNotice && <p role="status" className="mb-4 rounded-2xl bg-green-100 p-3 font-bold text-green-800">{onlineNotice}</p>}{loading && <p className="mb-4 font-bold">Memuat data…</p>}
       <nav className="mb-6 flex flex-wrap gap-2"><PageButton active={page === 'home'} onClick={() => goTo('home')} icon={<Home size={17}/>} label="Beranda"/><PageButton active={page === 'learn'} onClick={() => { setStudyDone(false); goTo('learn') }} icon={<BookOpen size={17}/>} label="Kartu kata"/><PageButton active={page === 'practice'} onClick={() => goTo('practice')} icon={<PenTool size={17}/>} label="Latihan"/><PageButton active={page === 'quiz'} onClick={() => { cancelSpeech(); setPage('quiz'); setQuizStarted(false) }} icon={<HelpCircle size={17}/>} label="Ujian"/><PageButton active={page === 'leaderboard'} onClick={() => { goTo('leaderboard'); void loadScores() }} icon={<Trophy size={17}/>} label="Papan skor"/></nav>
       {page === 'home' && <section className="space-y-7"><div className="rounded-[30px] bg-[#DDF5E9] p-8"><p className="font-black text-[#32875D]"><Sparkles className="inline"/> WAKTUNYA BELAJAR!</p><h1 className="mt-3 text-4xl font-black">Yuk, belajar kosakata Inggris!</h1></div><label className="block rounded-2xl bg-white p-5 font-bold">Nama siswa<input id="exam-student-name" value={studentName} onChange={(e) => setStudentName(e.target.value)} placeholder="Nama siswa" className="mt-2 block w-full rounded-xl border p-3"/></label><CategoryButtons categories={safeCategories} selected={categoryId} onSelect={selectCategory}/></section>}
       {page === 'learn' && <section><div className="mb-4 flex flex-wrap items-center justify-between"><h1 className="text-3xl font-black">Kartu kata</h1><OnlineControls online={onlineSource} setOnline={setOnlineSource} loading={onlineLoading} onLoad={loadOnline}/></div><CategoryButtons categories={safeCategories} selected={categoryId} onSelect={selectCategory}/>{studyDone ? <div className="mt-5 rounded-3xl bg-white p-8 text-center"><h2 className="text-2xl font-black">Hebat! Daftar selesai.</h2><button onClick={() => { setStudyDone(false); setWordIndex(0) }} className="m-2 rounded-xl bg-[#FFF1D6] p-3">Ulangi Daftar Kata</button><button onClick={nextStudyPage} className="m-2 rounded-xl bg-green-700 p-3 text-white">Lanjut ke Latihan</button></div> : studyWord ? <article className="mt-5 rounded-3xl bg-white p-7 text-center"><div className="text-8xl">{studyWord.image_emoji ?? ''}</div><h2 className="mt-3 text-4xl font-black">{studyWord.word_en}</h2><p>{studyWord.phonetic ?? ''}</p><p className="text-xl font-bold">{studyWord.word_id ?? ''}</p><div className="mt-4 flex justify-center gap-4"><SpeakButton text={studyWord.word_en} id="study-word" active={speaking} speak={speak}/><span>{studyWord.example_en}</span><SpeakButton text={studyWord.example_en} id="study-example" active={speaking} speak={speak}/></div><p>{studyWord.example_id ?? ''}</p>{countdown !== null && <p>Otomatis lanjut dalam {countdown} detik...</p>}<button onClick={() => speak(studyWord.word_en, 'repeat')} className="m-3 rounded-xl bg-amber-100 p-3"><RotateCcw/> Ulangi</button><button onClick={advanceWord} className="rounded-xl bg-green-700 p-3 text-white">Lanjut <ArrowRight/></button></article> : <p>Belum ada kata.</p>}</section>}
-      {page === 'practice' && <section><div className="mb-4 flex flex-wrap items-center justify-between"><div><h1 className="text-3xl font-black">Latihan</h1><p>Menulis Bahasa Inggris — latihan bebas, skor tidak disimpan.</p></div><OnlineControls online={onlineSource} setOnline={setOnlineSource} loading={onlineLoading} onLoad={loadOnline}/></div><div className="mb-5 grid gap-3 sm:grid-cols-2"><label className="font-bold">Kelas<select value={practiceGrade ?? ''} onChange={(e) => { setPracticeGrade(e.target.value ? Number(e.target.value) : null); setPracticePool([]); setPracticeIndex(0) }} className="mt-1 block w-full rounded-xl bg-white p-3"><option value="">Semua Kelas</option>{GRADES.map((g) => <option key={g} value={g}>Kelas {g} SD</option>)}</select></label><label className="font-bold">Kategori<select value={practiceCategory} onChange={(e) => { setPracticeCategory(e.target.value); setPracticePool([]); setPracticeIndex(0) }} className="mt-1 block w-full rounded-xl bg-white p-3"><option value="">Semua Kategori</option>{safeCategories.map((c) => <option key={c.id} value={c.id}>{c.name_id}</option>)}</select></label></div><button onClick={shufflePractice} className="mb-4 rounded-xl bg-green-700 p-3 text-white"><Shuffle/> Acak Soal</button><PracticeCard word={currentPractice} index={practiceIndex} total={practicePool.length || practiceWords.length} input={practiceInput} setInput={setPracticeInput} checked={practiceChecked} correct={practiceCorrect} hint={hint} setHint={setHint} check={practiceCheck} next={practiceNext} retry={() => { setPracticeInput(''); setPracticeChecked(false); setPracticeCorrect(null); practiceInputRef.current?.focus() }} inputRef={practiceInputRef} speaking={speaking} speak={speak} speakSequence={speakSequence}/></section>}
-      {page === 'quiz' && <ExamPanel started={quizStarted} start={() => { setQuizStarted(false) }} startExam={startExam} name={studentName} setName={setStudentName} grade={grade} setGrade={setGrade} categories={safeCategories} categoryId={categoryId} setCategoryId={setCategoryId} mode={quizMode} setMode={setQuizMode} questions={questions} index={questionIndex} score={score} finished={finished} scoreSaved={scoreSaved} question={question} answer={answer} submitted={submitted} correct={answerCorrect} written={writtenAnswer} setWritten={setWrittenAnswer} submit={submitAnswer} next={nextQuestion} speak={speak} speaking={speaking} leaderboard={() => { setPage('leaderboard'); void loadScores() }}/>}>
+      {page === 'practice' && <section><div className="mb-4 flex flex-wrap items-center justify-between"><div><h1 className="text-3xl font-black">Latihan</h1><p>Menulis Bahasa Inggris — latihan bebas, skor tidak disimpan.</p></div><OnlineControls online={onlineSource} setOnline={setOnlineSource} loading={onlineLoading} onLoad={loadOnline}/></div><div className="mb-5 grid gap-3 sm:grid-cols-2"><label className="font-bold">Kelas<select value={practiceGrade ?? ''} onChange={(e) => { setPracticeGrade(e.target.value ? Number(e.target.value) : null); setPracticePool([]); setPracticeIndex(0) }} className="mt-1 block w-full rounded-xl bg-white p-3"><option value="">Semua Kelas</option>{GRADES.map((g) => <option key={g} value={g}>Kelas {g} SD</option>)}</select></label><label className="font-bold">Kategori<select value={practiceCategory} onChange={(e) => { setPracticeCategory(e.target.value); setPracticePool([]); setPracticeIndex(0) }} className="mt-1 block w-full rounded-xl bg-white p-3"><option value="">Semua Kategori</option>{safeCategories.map((c) => <option key={c.id} value={c.id}>{c.name_id}</option>)}</select></label></div><button onClick={practiceShuffle} className="mb-4 rounded-xl bg-green-700 p-3 text-white"><Shuffle/> Acak Soal</button><PracticeCard word={currentPractice} index={practiceIndex} total={practicePool.length || practiceWords.length} input={practiceInput} setInput={setPracticeInput} checked={practiceChecked} correct={practiceCorrect} hint={hint} setHint={setHint} check={practiceCheck} next={practiceNext} retry={() => { setPracticeInput(''); setPracticeChecked(false); setPracticeCorrect(null); practiceInputRef.current?.focus() }} inputRef={practiceInputRef} speaking={speaking} speak={speak} speakSequence={speakSequence}/></section>}
+      {page === 'quiz' && <ExamPanel started={quizStarted} startExam={startExam} name={studentName} setName={setStudentName} grade={grade} setGrade={setGrade} categories={safeCategories} categoryId={categoryId} setCategoryId={setCategoryId} mode={quizMode} setMode={setQuizMode} questions={questions} index={questionIndex} score={score} finished={finished} scoreSaved={scoreSaved} question={question} answer={answer} submitted={submitted} correct={answerCorrect} written={writtenAnswer} setWritten={setWrittenAnswer} submit={submitAnswer} next={nextQuestion} speak={speak} speaking={speaking} leaderboard={() => { setPage('leaderboard'); void loadScores() }}/>} />}
       {page === 'leaderboard' && <section className="rounded-3xl bg-white p-6"><div className="mb-4 flex items-center justify-between"><h1 className="text-3xl font-black"><Trophy/> Papan Skor</h1><button onClick={() => void loadScores()} disabled={scoresLoading} className="rounded-xl bg-green-100 p-3"><RefreshCw className={scoresLoading ? 'animate-spin' : ''}/></button></div>{scoresLoading && <p>Memuat…</p>}{scores.map((item, index) => <p key={item.id ?? index} className="border-t p-3">{index + 1}. {item.student_name} · Kelas {item.grade_level} · {item.category_name} · {item.score}/{item.total_questions}</p>)}</section>}
     </main></div>
 }
 
-function OnlineControls({ online, setOnline, loading, onLoad }: { online: boolean; setOnline: (value: boolean) => void; loading: boolean; onLoad: () => void }) {
-  return <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-white p-3"><label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={online} onChange={(e) => setOnline(e.target.checked)} className="accent-green-700"/>Database + Online</label><button onClick={onLoad} disabled={!online || loading} className="inline-flex items-center gap-2 rounded-xl bg-green-700 px-3 py-2 text-sm font-bold text-white disabled:opacity-50">{loading ? <Loader2 className="animate-spin" size={17}/> : <Globe size={17}/>} {loading ? 'Memuat kata…' : 'Muat Kata Online'}</button></div>
-}
+function OnlineControls({ online, setOnline, loading, onLoad }: { online: boolean; setOnline: (value: boolean) => void; loading: boolean; onLoad: () => void }) { return <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-white p-3"><label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={online} onChange={(e) => setOnline(e.target.checked)} className="accent-green-700"/>Database + Online</label><button onClick={onLoad} disabled={!online || loading} className="inline-flex items-center gap-2 rounded-xl bg-green-700 px-3 py-2 text-sm font-bold text-white disabled:opacity-50">{loading ? <Loader2 className="animate-spin" size={17}/> : <Globe size={17}/>} {loading ? 'Memuat kata…' : 'Muat Kata Online'}</button></div> }
 function PracticeCard({ word, index, total, input, setInput, checked, correct, hint, setHint, check, next, retry, inputRef, speaking, speak, speakSequence }: { word?: Vocabulary; index: number; total: number; input: string; setInput: (v: string) => void; checked: boolean; correct: boolean | null; hint: boolean; setHint: (v: boolean) => void; check: () => void; next: () => void; retry: () => void; inputRef: React.RefObject<HTMLInputElement>; speaking: string | null; speak: (text: string | null | undefined, id: string) => void; speakSequence: (parts: { text: string; lang: string; rate: number }[], done?: () => void) => void }) {
   if (!word) return <p className="rounded-2xl bg-white p-6">Belum ada kosakata untuk filter ini.</p>
   const english = word.word_en ?? ''
@@ -411,7 +339,7 @@ function PracticeCard({ word, index, total, input, setInput, checked, correct, h
   const hintText = `${first}${english.slice(1).split('').map(() => ' _').join('')} (${english.length} huruf)`
   return <article className="mt-4 rounded-3xl bg-white p-6 text-center shadow"><p>Soal {index + 1} dari {total}</p><div className="text-[120px]">{word.image_emoji ?? ''}</div><p className="text-2xl font-black">{word.word_id ?? ''}</p><div className="mt-3 flex justify-center gap-3"><button onClick={() => setHint(true)} className="inline-flex items-center gap-2 rounded-xl bg-amber-100 p-3 font-bold"><Lightbulb/> Petunjuk Huruf</button><SpeakButton text={english} id={`practice-${word.id}`} active={speaking} speak={speak}/></div>{hint && <p className="mt-3 font-mono text-lg font-black text-green-700">{hintText}</p>}<form onSubmit={(e) => { e.preventDefault(); check() }} className="mx-auto mt-5 flex max-w-xl flex-col gap-3 sm:flex-row"><input ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} disabled={checked} autoCapitalize="none" autoCorrect="off" spellCheck={false} className="min-h-14 flex-1 rounded-xl border-2 px-4 text-lg" placeholder="Ketik kata bahasa Inggris"/><button disabled={checked || !input.trim()} className="rounded-xl bg-green-700 px-5 font-bold text-white disabled:opacity-40">Periksa Jawaban</button></form>{checked && (correct ? <div className="mt-4 rounded-xl bg-green-50 p-4 font-bold text-green-800"><CheckCircle2 className="inline"/> Hebat! Jawabanmu Benar! <button onClick={() => speakSequence([{ text: 'Hebat! Jawabanmu benar.', lang: 'id-ID', rate: .95 }, { text: english, lang: 'en-US', rate: .85 }])}><Volume2/></button><button onClick={next} className="ml-3 rounded-lg bg-green-700 p-2 text-white">Soal Berikutnya</button><small className="ml-2">Otomatis lanjut dalam 2,5 detik</small></div> : <div className="mt-4 rounded-xl border-2 border-orange-200 bg-orange-50 p-4 text-left"><p>Jawabanmu: <s className="text-red-600">{input}</s></p><p className="mt-2 text-3xl font-black text-green-700">{english}</p><p className="font-mono font-bold">{english.toUpperCase().split('').join(' - ')}</p><p>Cara baca: {word.phonetic ?? ''}</p><div className="mt-3 flex gap-2"><button onClick={retry} className="rounded-lg bg-amber-100 p-3"><RotateCcw/> Tulis Ulang Jawaban</button><button onClick={next} className="rounded-lg bg-green-700 p-3 text-white">Soal Berikutnya <ArrowRight/></button></div></div>)}</article>
 }
-function ExamPanel({ started, start, startExam, name, setName, grade, setGrade, categories, categoryId, setCategoryId, mode, setMode, questions, index, score, finished, scoreSaved, question, answer, submitted, correct, written, setWritten, submit, next, speak, speaking, leaderboard }: { started: boolean; start: () => void; startExam: () => void; name: string; setName: (s: string) => void; grade: number; setGrade: (n: number) => void; categories: Category[]; categoryId: string; setCategoryId: (s: string) => void; mode: QuizMode; setMode: (m: QuizMode) => void; questions: Question[]; index: number; score: number; finished: boolean; scoreSaved: boolean; question?: Question; answer: string | null; submitted: boolean; correct: boolean | null; written: string; setWritten: (s: string) => void; submit: (s: string) => void; next: () => void; speak: (s: string | null | undefined, id: string) => void; speaking: string | null; leaderboard: () => void }) {
+function ExamPanel({ started, startExam, name, setName, grade, setGrade, categories, categoryId, setCategoryId, mode, setMode, questions, index, score, finished, scoreSaved, question, answer, submitted, correct, written, setWritten, submit, next, speak, speaking, leaderboard }: { started: boolean; startExam: () => void; name: string; setName: (s: string) => void; grade: number; setGrade: (n: number) => void; categories: Category[]; categoryId: string; setCategoryId: (s: string) => void; mode: QuizMode; setMode: (m: QuizMode) => void; questions: Question[]; index: number; score: number; finished: boolean; scoreSaved: boolean; question?: Question; answer: string | null; submitted: boolean; correct: boolean | null; written: string; setWritten: (s: string) => void; submit: (s: string) => void; next: () => void; speak: (s: string | null | undefined, id: string) => void; speaking: string | null; leaderboard: () => void }) {
   const word = question?.word
   if (finished) return <div className="text-center"><Trophy size={52}/><h1 className="mt-3 text-3xl font-black">Hebat, {name || 'Siswa'}!</h1><p className="mt-2 text-xl font-bold">Skor {score}/{questions.length}</p><p>{scoreSaved ? 'Skor tersimpan!' : 'Skor belum tersimpan.'}</p><button onClick={leaderboard} className="mt-4 rounded-xl bg-amber-100 p-3">Lihat Papan Skor</button></div>
   if (!started) return <div><h1 className="text-3xl font-black">Persiapan Ujian</h1><label className="mt-4 block font-bold">Nama siswa<input value={name} onChange={(e) => setName(e.target.value)} className="mt-2 w-full rounded-xl border p-3" placeholder="Nama wajib diisi"/></label><p className="mt-4 font-bold">Kelas</p><div className="grid grid-cols-3 gap-2 sm:grid-cols-6">{GRADES.map((g) => <button key={g} onClick={() => setGrade(g)} className={`rounded-xl p-3 ${grade === g ? 'bg-green-700 text-white' : 'bg-amber-100'}`}>Kelas {g} SD</button>)}</div><label className="mt-4 block font-bold">Kategori<select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="mt-2 w-full rounded-xl border p-3"><option value="">Semua Kategori</option>{categories.map((c) => <option key={c.id} value={c.id}>{c.name_id}</option>)}</select></label><label className="mt-4 block font-bold">Mode ujian<select value={mode} onChange={(e) => setMode(e.target.value as QuizMode)} className="mt-2 w-full rounded-xl border p-3">{MODES.map((m) => <option value={m.value} key={m.value}>{m.label}</option>)}</select></label><button onClick={startExam} className="mt-5 w-full rounded-xl bg-green-700 p-3 font-bold text-white">Mulai Ujian</button></div>
