@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
+  ArrowRight,
   BookOpen,
   Check,
   ChevronRight,
@@ -8,6 +9,7 @@ import {
   Home,
   Medal,
   RefreshCw,
+  RotateCcw,
   Sparkles as SparklesIcon,
   Trophy,
   Volume2,
@@ -70,6 +72,9 @@ function App() {
   const [grade, setGrade] = useState(1)
   const [studentName, setStudentName] = useState('')
   const [wordIndex, setWordIndex] = useState(0)
+  const [autoAdvance, setAutoAdvance] = useState(true)
+  const [countdown, setCountdown] = useState<number | null>(null)
+  const [studyComplete, setStudyComplete] = useState(false)
   const [quizWords, setQuizWords] = useState<Vocabulary[]>([])
   const [quizIndex, setQuizIndex] = useState(0)
   const [quizScore, setQuizScore] = useState(0)
@@ -79,6 +84,27 @@ function App() {
   const [speaking, setSpeaking] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(Boolean(supabase))
+  const speechTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const speechRunRef = useRef(0)
+
+  const clearTimers = () => {
+    if (speechTimerRef.current) clearTimeout(speechTimerRef.current)
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current)
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current)
+    speechTimerRef.current = null
+    advanceTimerRef.current = null
+    countdownTimerRef.current = null
+    setCountdown(null)
+  }
+
+  const cancelSpeech = () => {
+    speechRunRef.current += 1
+    clearTimers()
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel()
+    setSpeaking(null)
+  }
 
   useEffect(() => {
     let mounted = true
@@ -143,13 +169,25 @@ function App() {
     return () => { if (supabase) void supabase.removeChannel(channel) }
   }, [])
 
+  // Changing page, category or active card always cancels speech and pending auto-advance.
+  useEffect(() => {
+    cancelSpeech()
+    return () => {
+      speechRunRef.current += 1
+      if (speechTimerRef.current) clearTimeout(speechTimerRef.current)
+      if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current)
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current)
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel()
+    }
+  }, [page, categoryId, wordIndex])
+
   const safeCategories = categories ?? []
   const safeWords = vocabularies ?? []
   const category = safeCategories.find((item) => (item?.id ?? '') === categoryId) ?? null
   const visibleWords = useMemo(() => safeWords.filter((item) =>
     Number(item?.grade_level ?? grade) === grade && (!categoryId || (item?.category_id ?? '') === categoryId)),
   [safeWords, categoryId, grade])
-  const word = visibleWords.length ? visibleWords[wordIndex % visibleWords.length] : undefined
+  const word = visibleWords.length ? visibleWords[wordIndex] : undefined
   const quizWord = quizWords?.[quizIndex]
   const choices = useMemo(() => {
     if (!quizWord) return []
@@ -159,22 +197,81 @@ function App() {
     return [...alternatives, quizWord]
   }, [quizWord, safeWords])
 
+  const advanceWord = () => {
+    cancelSpeech()
+    if (wordIndex + 1 >= visibleWords.length) {
+      setStudyComplete(true)
+      return
+    }
+    setWordIndex((index) => index + 1)
+  }
+
   const speak = (text: string | null | undefined, id: string) => {
+    cancelSpeech()
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
-    window.speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(text ?? '')
+    const run = speechRunRef.current
+    const spokenText = text ?? ''
+    const utterance = new SpeechSynthesisUtterance(spokenText)
     utterance.lang = 'en-US'
     utterance.rate = 0.85
+    let completed = false
+
+    const beginAutoAdvance = () => {
+      if (completed || speechRunRef.current !== run) return
+      completed = true
+      if (speechTimerRef.current) clearTimeout(speechTimerRef.current)
+      speechTimerRef.current = null
+      setSpeaking(null)
+      if (!autoAdvance) return
+
+      setCountdown(2)
+      countdownTimerRef.current = setInterval(() => {
+        setCountdown((remaining) => {
+          if (remaining === null || remaining <= 1) return 0
+          return remaining - 1
+        })
+      }, 1000)
+      advanceTimerRef.current = setTimeout(() => {
+        advanceTimerRef.current = null
+        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current)
+        countdownTimerRef.current = null
+        setCountdown(null)
+        if (speechRunRef.current === run) advanceWord()
+      }, 2000)
+    }
+
     utterance.onstart = () => setSpeaking(id)
-    utterance.onend = () => setSpeaking(null)
-    utterance.onerror = () => setSpeaking(null)
+    utterance.onend = beginAutoAdvance
+    utterance.onerror = beginAutoAdvance
     setSpeaking(id)
     window.speechSynthesis.speak(utterance)
+    // Some browsers omit onend. Estimate duration generously and run the same guarded completion path.
+    const fallbackDuration = Math.max(2500, (spokenText.length / 12) * 1000)
+    speechTimerRef.current = setTimeout(beginAutoAdvance, fallbackDuration)
+  }
+
+  const repeatWord = () => {
+    if (!word) return
+    setStudyComplete(false)
+    speak(word.word_en, `word-${word.id ?? ''}`)
+  }
+
+  const continueStudy = () => {
+    cancelSpeech()
+    advanceWord()
+  }
+
+  const restartWordList = () => {
+    cancelSpeech()
+    setStudyComplete(false)
+    setWordIndex(0)
   }
 
   const startQuiz = () => {
+    cancelSpeech()
     if (!studentName.trim()) {
-      document.getElementById('student-name')?.focus()
+      setPage('home')
+      window.setTimeout(() => document.getElementById('student-name')?.focus(), 0)
       return
     }
     const pool = visibleWords.length ? visibleWords : safeWords.filter((item) => Number(item?.grade_level ?? grade) === grade)
@@ -222,20 +319,25 @@ function App() {
     })
   }
 
+  const goTo = (nextPage: Page) => {
+    cancelSpeech()
+    setPage(nextPage)
+  }
+
   return (
     <div className="min-h-screen bg-[#F6FBF8] pb-20 text-[#25334A]">
       <header className="mx-auto flex max-w-5xl items-center justify-between p-5">
-        <button onClick={() => setPage('home')} className="flex items-center gap-2 text-xl font-black"><span>🌱</span>KosaKata</button>
+        <button onClick={() => goTo('home')} className="flex items-center gap-2 text-xl font-black"><span>🌱</span>KosaKata</button>
         <span className="flex items-center gap-2 rounded-full bg-white px-4 py-2 font-bold"><BookOpen size={18} /> Kelas {grade}</span>
       </header>
       <main className="mx-auto max-w-5xl px-4 pb-8">
         {error && <p role="status" className="mb-4 rounded-2xl bg-amber-100 p-4 font-bold">{error ?? ''}</p>}
         {loading && <p className="mb-4 font-bold">Memuat data…</p>}
         <nav className="mb-6 flex flex-wrap gap-2">
-          <PageButton active={page === 'home'} onClick={() => setPage('home')} icon={<Home size={17} />} label="Beranda" />
-          <PageButton active={page === 'learn'} onClick={() => setPage('learn')} icon={<BookOpen size={17} />} label="Kartu kata" />
+          <PageButton active={page === 'home'} onClick={() => goTo('home')} icon={<Home size={17} />} label="Beranda" />
+          <PageButton active={page === 'learn'} onClick={() => { setStudyComplete(false); goTo('learn') }} icon={<BookOpen size={17} />} label="Kartu kata" />
           <PageButton active={page === 'quiz'} onClick={startQuiz} icon={<CircleHelp size={17} />} label="Kuis" />
-          <PageButton active={page === 'leaderboard'} onClick={() => { setPage('leaderboard'); void loadScores() }} icon={<Trophy size={17} />} label="Papan skor" />
+          <PageButton active={page === 'leaderboard'} onClick={() => { goTo('leaderboard'); void loadScores() }} icon={<Trophy size={17} />} label="Papan skor" />
         </nav>
 
         {page === 'home' && <section className="space-y-7">
@@ -249,26 +351,52 @@ function App() {
             <p className="mb-2 mt-5 font-extrabold">Pilih kelas</p>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">{GRADES.map((item) => <button key={item} onClick={() => setGrade(item)} className={`min-h-12 rounded-xl font-black ${grade === item ? 'bg-[#32875D] text-white' : 'bg-[#FFF1D6]'}`}>Kelas {item}</button>)}</div>
           </section>
-          <section><h2 className="mb-3 text-xl font-black">Pilih kategori</h2><CategoryButtons categories={safeCategories} selected={categoryId} onSelect={setCategoryId} /></section>
+          <section><h2 className="mb-3 text-xl font-black">Pilih kategori</h2><CategoryButtons categories={safeCategories} selected={categoryId} onSelect={(id) => { cancelSpeech(); setCategoryId(id); setWordIndex(0); setStudyComplete(false) }} /></section>
           <button onClick={startQuiz} className="rounded-2xl bg-[#32875D] px-6 py-4 font-black text-white">Mulai kuis <ChevronRight className="inline" /></button>
         </section>}
 
         {page === 'learn' && <section>
-          <h1 className="mb-4 text-3xl font-black">Kartu kata</h1>
-          <CategoryButtons categories={safeCategories} selected={categoryId} onSelect={(id) => { setCategoryId(id); setWordIndex(0) }} />
-          {word ? <article className="mt-5 rounded-[30px] bg-white p-7 text-center shadow-sm">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h1 className="text-3xl font-black">Kartu kata</h1>
+            <label className="inline-flex cursor-pointer items-center gap-3 rounded-full bg-white px-4 py-3 text-sm font-extrabold shadow-sm">
+              <input type="checkbox" checked={autoAdvance} onChange={(event) => { cancelSpeech(); setAutoAdvance(event.target.checked) }} className="h-5 w-5 accent-[#32875D]" />
+              Auto-lanjut
+            </label>
+          </div>
+          <CategoryButtons categories={safeCategories} selected={categoryId} onSelect={(id) => { cancelSpeech(); setCategoryId(id); setWordIndex(0); setStudyComplete(false) }} />
+          {studyComplete ? (
+            <article className="mx-auto mt-6 max-w-2xl rounded-[30px] bg-white p-8 text-center shadow-sm">
+              <div className="text-6xl">🎉</div>
+              <h2 className="mt-4 text-3xl font-black">Hebat! Kamu menyelesaikan daftar kata.</h2>
+              <p className="mt-2 font-semibold text-slate-500">Mau mengulang atau mencoba kuis?</p>
+              <div className="mt-6 flex flex-wrap justify-center gap-3">
+                <button onClick={restartWordList} className="inline-flex min-h-12 items-center gap-2 rounded-2xl bg-[#FFF1D6] px-5 font-extrabold"><RotateCcw size={19} /> Ulangi Daftar Kata</button>
+                <button onClick={startQuiz} className="inline-flex min-h-12 items-center gap-2 rounded-2xl bg-[#32875D] px-5 font-extrabold text-white">Lanjut ke Kuis <ArrowRight size={19} /></button>
+              </div>
+            </article>
+          ) : word ? <article className="mx-auto mt-5 max-w-2xl rounded-[30px] bg-white p-7 text-center shadow-sm">
+            <div className="mb-4 flex items-center justify-between text-sm font-bold text-slate-400">
+              <span>{category?.name_id ?? category?.name_en ?? 'Semua kategori'} · Kelas {word.grade_level ?? ''}</span>
+              <span>Kata {wordIndex + 1} dari {visibleWords.length}</span>
+            </div>
             <span className="text-7xl">{word.image_emoji ?? ''}</span>
             <h2 className="mt-3 text-4xl font-black">{word.word_en ?? ''}</h2>
             <p className="mt-2 text-slate-500">{word.phonetic ?? ''}</p>
             <p className="mt-2 text-xl font-bold">{word.word_id ?? ''}</p>
-            <div className="my-5 flex items-center justify-center gap-3"><SpeakButton text={word.word_en} id={`word-${word.id ?? ''}`} active={speaking} speak={speak} /><span className="font-bold">{word.example_en ?? ''}</span><SpeakButton text={word.example_en} id={`example-${word.id ?? ''}`} active={speaking} speak={speak} /></div>
-            <p className="text-sm text-slate-500">{word.example_id ?? ''}</p>
-            <button onClick={() => setWordIndex((index) => index + 1)} className="mt-5 rounded-xl bg-[#DDF5E9] px-5 py-3 font-extrabold">Kata berikutnya</button>
+            <div className="my-5 rounded-2xl bg-[#F6FBF8] p-4">
+              <div className="flex flex-wrap items-center justify-center gap-3"><SpeakButton text={word.word_en} id={`word-${word.id ?? ''}`} active={speaking} speak={speak} /><span className="font-bold">{word.example_en ?? ''}</span><SpeakButton text={word.example_en} id={`example-${word.id ?? ''}`} active={speaking} speak={speak} /></div>
+              {Boolean(word.example_id) && <p className="mt-2 text-sm text-slate-500">{word.example_id ?? ''}</p>}
+            </div>
+            {countdown !== null && <p aria-live="polite" className="mb-3 text-sm font-extrabold text-[#32875D]">Otomatis lanjut dalam {countdown} detik...</p>}
+            <div className="mt-5 flex flex-wrap justify-center gap-3">
+              <button onClick={repeatWord} className="inline-flex min-h-12 items-center gap-2 rounded-2xl bg-[#FFF1D6] px-6 font-extrabold"><RotateCcw size={19} /> Ulangi</button>
+              <button onClick={continueStudy} className="inline-flex min-h-12 items-center gap-2 rounded-2xl bg-[#32875D] px-6 font-extrabold text-white">Lanjut <ArrowRight size={19} /></button>
+            </div>
           </article> : <p className="mt-5 rounded-2xl bg-white p-6">Belum ada kata untuk kelas atau kategori ini.</p>}
         </section>}
 
         {page === 'quiz' && <section className="mx-auto max-w-2xl rounded-[30px] bg-white p-7 shadow-sm">
-          {finished ? <div className="text-center"><Trophy size={54} className="mx-auto text-amber-500" /><h1 className="mt-4 text-3xl font-black">Hebat, {studentName || 'Siswa'}!</h1><p className="mt-2 text-xl font-bold">Skor {quizScore} / {quizWords.length}</p><p className="mt-2">{scoreSaved ? 'Skor tersimpan!' : 'Skor tersimpan jika Supabase terhubung.'}</p><button onClick={() => setPage('leaderboard')} className="mt-5 rounded-xl bg-[#FFF1D6] px-5 py-3 font-bold">Lihat papan skor</button></div>
+          {finished ? <div className="text-center"><Trophy size={54} className="mx-auto text-amber-500" /><h1 className="mt-4 text-3xl font-black">Hebat, {studentName || 'Siswa'}!</h1><p className="mt-2 text-xl font-bold">Skor {quizScore} / {quizWords.length}</p><p className="mt-2">{scoreSaved ? 'Skor tersimpan!' : 'Skor tersimpan jika Supabase terhubung.'}</p><button onClick={() => goTo('leaderboard')} className="mt-5 rounded-xl bg-[#FFF1D6] px-5 py-3 font-bold">Lihat papan skor</button></div>
             : quizWord ? <><div className="flex items-center justify-between"><h1 className="text-2xl font-black">Soal {quizIndex + 1} / {quizWords.length}</h1><span className="font-bold">⭐ {quizScore}</span></div><div className="my-6 flex items-center justify-center gap-4 rounded-2xl bg-[#F6FBF8] p-6"><span className="text-5xl">{quizWord.image_emoji ?? ''}</span><b className="text-3xl">{quizWord.word_en ?? ''}</b><SpeakButton text={quizWord.word_en} id={`quiz-${quizWord.id ?? ''}`} active={speaking} speak={speak} /></div><p className="mb-3 text-center font-bold">Pilih arti yang benar</p><div className="grid gap-3 sm:grid-cols-2">{choices.map((choice, index) => <button key={choice?.id ?? index} disabled={Boolean(answer)} onClick={() => selectAnswer(choice?.word_id ?? '')} className={`min-h-14 rounded-xl border-2 p-3 font-bold ${answer && choice?.word_id === quizWord.word_id ? 'border-green-400 bg-green-50' : 'border-slate-100'}`}>{choice?.word_id ?? ''}{answer && choice?.word_id === quizWord.word_id && <Check className="float-right" />}</button>)}</div>{answer && <button onClick={nextQuestion} className="mt-5 w-full rounded-xl bg-[#32875D] p-3 font-bold text-white">{quizIndex + 1 === quizWords.length ? 'Selesai' : 'Soal berikutnya'}</button>}</>
               : <p>Belum ada kata untuk kuis ini.</p>}
         </section>}
